@@ -3,6 +3,8 @@ import { useInventoryStore } from './store/inventoryStore';
 import { debugData, fetchNui } from './utils/nui';
 import { Container } from './components/Container';
 import { ItemView } from './components/Item';
+import { EquipmentPanel } from './components/EquipmentPanel';
+import { EquipmentSlot } from './components/EquipmentSlot';
 import { snapCenterToCursor } from './utils/modifiers';
 import { DndContext, type DragEndEvent, type DragMoveEvent, useSensor, useSensors, PointerSensor, rectIntersection, DragOverlay } from '@dnd-kit/core';
 
@@ -12,12 +14,14 @@ interface WeightUpdate {
 }
 
 const debugPlayerItems = [
-  { name: 'water', count: 1, slot: { x: 1, y: 1 }, label: 'Water', size: { x: 1, y: 2 }, weight: 0.5 },
-  { name: 'pistol', count: 1, slot: { x: 3, y: 1 }, label: 'Pistol', size: { x: 2, y: 2 }, weight: 1.5 },
+  { name: 'water', count: 1, slot: { x: 1, y: 1 }, label: 'Water', size: { x: 1, y: 2 }, weight: 0.5, type: 'generic' },
+  { name: 'pistol', count: 1, slot: { x: 3, y: 1 }, label: 'Pistol', size: { x: 2, y: 2 }, weight: 1.5, type: 'weapon_pistol' },
+  { name: 'helmet', count: 1, slot: { x: 1, y: 4 }, label: 'Helmet', size: { x: 2, y: 2 }, weight: 0.8, type: 'helmet' },
+  { name: 'rifle', count: 1, slot: { x: 3, y: 4 }, label: 'Rifle', size: { x: 4, y: 2 }, weight: 3.5, type: 'weapon_primary' },
 ];
 
 const debugVestItems = [
-  { name: 'bandage', count: 2, slot: { x: 1, y: 1 }, label: 'Bandage', size: { x: 1, y: 1 }, weight: 0.1 },
+  { name: 'bandage', count: 2, slot: { x: 1, y: 1 }, label: 'Bandage', size: { x: 1, y: 1 }, weight: 0.1, type: 'generic' },
 ];
 
 debugData([
@@ -28,7 +32,7 @@ debugData([
         id: 'player-inv',
         type: 'player',
         label: 'Player Inventory',
-        size: { width: 6, height: 10 },
+        size: { width: 6, height: 3 },
         items: debugPlayerItems,
         weight: 2.0,
         maxWeight: 40.0
@@ -62,10 +66,10 @@ interface HighlightState {
 }
 
 function App() {
-  const { isOpen, setOpen, setContainerData, moveItem, containers, updateContainerWeight } = useInventoryStore();
+  const { isOpen, setOpen, setContainerData, moveItem, containers, updateContainerWeight, equipment, equipItem, unequipItem } = useInventoryStore();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [activeDragRotation, setActiveDragRotation] = useState<boolean>(false);
-  const [dragHighlight, setDragHighlight] = useState<HighlightState | null>(null);
+  const [dragHighlight, setDragHighlight] = useState<HighlightState | undefined>(undefined);
 
   // Keep track of the current drag state so we can re-verify on rotation change
   const currentDragState = useRef<{ overId: string; activeRect: any } | null>(null);
@@ -95,7 +99,8 @@ function App() {
               ...def,
               ...item,
               size: def?.size || item.size || { x: 1, y: 1 },
-              weight: def?.weight || item.weight || 0
+              weight: def?.weight || item.weight || 0,
+              type: def?.type || item.type || 'generic'
             };
           });
 
@@ -124,10 +129,16 @@ function App() {
 
   useEffect(() => {
     if (activeId) {
-      const item = Object.values(containers).flatMap(c => c.items).find(i => i.name === activeId);
+      // Check in containers
+      let item: any = Object.values(containers).flatMap((c: any) => c.items).find((i: any) => i.name === activeId);
+      // Check in equipment
+      if (!item) {
+        item = Object.values(equipment).find(i => i?.name === activeId);
+      }
+
       if (item) setActiveDragRotation(!!item.rotated);
     }
-  }, [activeId]);
+  }, [activeId, containers, equipment]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -197,7 +208,7 @@ function App() {
 
     // 3. Collision Check
     const hasCollision = container.items.some((otherItem) => {
-      if (otherItem.name === item.name) return false; // Ignore self (should be gone from ghost but checking just in case)
+      if (otherItem.name === item.name) return false; // Ignore self 
 
       const otherRotated = !!otherItem.rotated;
       const otherOriginalSize = otherItem.size || { x: 1, y: 1 };
@@ -219,7 +230,19 @@ function App() {
   }, [containers]);
 
   const updateDragHighlight = useCallback((overId: string, activeRect: any, rotation: boolean) => {
-    const activeItem = Object.values(containers).flatMap(c => c.items).find(i => i.name === activeId);
+    // Find item logic updated to include equipment if needed, but highlight usually only for grids
+    // Actually we might want highlight for equipment slots too, but that's handled by EquipmentSlot component visual
+    // So here we only care if overId is a container
+    if (!containers[overId]) {
+      setDragHighlight(undefined);
+      return;
+    }
+
+    let activeItem: any = Object.values(containers).flatMap((c: any) => c.items).find((i: any) => i.name === activeId);
+    if (!activeItem) {
+      activeItem = Object.values(equipment).find(i => i?.name === activeId);
+    }
+
     if (!activeItem) return;
 
     const targetSlot = calculateTargetSlot(overId, activeRect);
@@ -243,16 +266,16 @@ function App() {
         isValid
       });
     } else {
-      setDragHighlight(null);
+      setDragHighlight(undefined);
     }
-  }, [activeId, containers, calculateTargetSlot, validatePlacement]);
+  }, [activeId, containers, equipment, calculateTargetSlot, validatePlacement]);
 
 
   const handleDragMove = (event: DragMoveEvent) => {
     const { active, over } = event;
 
     if (!over || !activeId) {
-      setDragHighlight(null);
+      setDragHighlight(undefined);
       currentDragState.current = null;
       return;
     }
@@ -277,29 +300,75 @@ function App() {
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     setActiveId(null);
-    setDragHighlight(null); // Clear highlight
+    setDragHighlight(undefined); // Clear highlight
     currentDragState.current = null;
-
     const finalRotation = activeDragRotation;
 
     if (!over) return;
 
 
     const itemName = active.id as string;
-    let fromContainerId = '';
 
-    Object.values(containers).forEach(c => {
+    // Find Item & Source
+    let fromContainerId = '';
+    let item = null;
+
+    // Check containers
+    for (const c of Object.values(containers)) {
       const found = c.items.find(i => i.name === itemName);
       if (found) {
         fromContainerId = c.id;
+        item = found;
+        break;
       }
-    });
+    }
 
-    if (!fromContainerId) return;
+    // Check equipment if not in container
+    if (!item) {
+      for (const [slot, equipItem] of Object.entries(equipment)) {
+        if (equipItem?.name === itemName) {
+          fromContainerId = `equip-${slot}`; // Special ID for equipment source
+          item = equipItem;
+          break;
+        }
+      }
+    }
 
-    const toContainerId = over.id as string;
+    if (!fromContainerId || !item) return;
 
-    const containerElement = document.getElementById(toContainerId);
+    const toId = over.id as string;
+
+    // --- EQUIPMENT LOGIC ---
+    if (toId.startsWith('equip-')) {
+      const targetSlotId = toId.replace('equip-', '');
+      const acceptedTypes = over.data.current?.acceptedTypes as string[] || [];
+
+      // Validate Type
+      if (acceptedTypes.length > 0 && item.type && !acceptedTypes.includes(item.type)) {
+        // Check if item type matches any of the accepted types
+        // If not compatible, return early
+        return;
+      }
+
+      // If Logic: Equip Item
+      if (fromContainerId.startsWith('equip-')) {
+        // Moving from Equip to Equip? (Swap or Move)
+        // Implementation delayed for simplicity or handle if types match
+      } else {
+        // Moving from Container to Equip
+        equipItem(targetSlotId, item, fromContainerId);
+        fetchNui('equipItem', {
+          item: itemName,
+          slot: targetSlotId,
+          from: fromContainerId
+        });
+      }
+      return;
+    }
+
+    // --- CONTAINER LOGIC ---
+    // Dropping into a container
+    const containerElement = document.getElementById(toId);
     if (!containerElement) return;
 
     const containerRect = containerElement.getBoundingClientRect();
@@ -308,7 +377,6 @@ function App() {
 
     if (!itemRect) return;
 
-    // Use reuse logic? Or keep ensuring standalone handles?
     const PADDING_X = 13;
     const PADDING_Y = 13;
 
@@ -318,18 +386,36 @@ function App() {
     const slotX = Math.max(1, Math.round(relativeX / (SLOT_SIZE + GAP)) + 1);
     const slotY = Math.max(1, Math.round(relativeY / (SLOT_SIZE + GAP)) + 1);
 
-    moveItem(fromContainerId, toContainerId, itemName, { x: slotX, y: slotY }, finalRotation);
+    // Un-equip if coming from equipment
+    if (fromContainerId.startsWith('equip-')) {
+      const sourceSlotId = fromContainerId.replace('equip-', '');
+      unequipItem(sourceSlotId, toId, { x: slotX, y: slotY });
 
-    fetchNui('moveItem', {
-      item: itemName,
-      from: fromContainerId,
-      to: toContainerId,
-      slot: { x: slotX, y: slotY },
-      rotated: finalRotation
-    });
+      fetchNui('unequipItem', {
+        item: itemName,
+        fromSlot: sourceSlotId,
+        to: toId,
+        slot: { x: slotX, y: slotY }
+      });
+    } else {
+      // Standard Move
+      moveItem(fromContainerId, toId, itemName, { x: slotX, y: slotY }, finalRotation);
+
+      fetchNui('moveItem', {
+        item: itemName,
+        from: fromContainerId,
+        to: toId,
+        slot: { x: slotX, y: slotY },
+        rotated: finalRotation
+      });
+    }
   };
 
-  const activeItem = activeId ? Object.values(containers).flatMap(c => c.items).find(i => i.name === activeId) : null;
+  // Helper to find active item for Overlay
+  let activeItem: any = activeId ? Object.values(containers).flatMap((c: any) => c.items).find((i: any) => i.name === activeId) : null;
+  if (!activeItem && activeId) {
+    activeItem = Object.values(equipment).find(i => i?.name === activeId);
+  }
 
   const renderDragOverlay = () => {
     if (!activeItem) return null;
@@ -357,29 +443,93 @@ function App() {
       onDragEnd={handleDragEnd}
     >
       <div className="flex items-center justify-center min-h-screen bg-black/40 text-white font-sans selection:bg-orange-500/30">
-        <div className="flex flex-col p-6 bg-zinc-900/95 backdrop-blur-xl border border-zinc-700/50 rounded-xl shadow-2xl max-w-7xl max-h-[90vh] overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-          <header className="flex items-center justify-between mb-6 pb-4 border-b border-zinc-700/50">
+        <div className="flex flex-col p-6 bg-zinc-900/95 backdrop-blur-xl border border-zinc-700/50 rounded-xl shadow-2xl w-full max-w-[95vw] h-[90vh] overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+          <header className="flex items-center justify-between mb-6 pb-4 border-b border-zinc-700/50 shrink-0">
             <h1 className="text-2xl font-bold text-zinc-100 tracking-tight flex items-center gap-3">
               <span className="w-2 h-8 bg-orange-500 rounded-full shadow-[0_0_15px_rgba(249,115,22,0.5)]" />
               TACTICAL GEAR
             </h1>
           </header>
 
-          <div className="flex flex-1 gap-6 overflow-hidden">
-            <div className="flex-1 overflow-y-auto overflow-x-hidden p-2 bg-zinc-800/20 rounded border border-zinc-700/30">
-              {containers['player-inv'] &&
-                <Container
-                  containerId="player-inv"
-                  highlight={dragHighlight?.containerId === 'player-inv' ? dragHighlight : undefined}
-                />
-              }
+          {/* 3-Column Layout */}
+          <div className="flex flex-1 gap-6 overflow-hidden min-h-0">
+
+            {/* LEFT: Equipment */}
+            <div className="flex-none">
+              <EquipmentPanel />
             </div>
 
-            <div className="flex-1 overflow-y-auto overflow-x-hidden p-2 bg-zinc-800/20 rounded border border-zinc-700/30">
+            {/* CENTER: Player Inventory (Grids) */}
+            <div className="flex-1 flex flex-col gap-4 overflow-y-auto overflow-x-hidden min-w-[300px]">
+
+              {/* Player Main Pockets/Inventory */}
+              {containers['player-inv'] &&
+                <div className="flex flex-col gap-1 p-2">
+                  <span className="text-zinc-500 text-xs font-bold uppercase tracking-wider">Pockets / Belt</span>
+                  <Container
+                    containerId="player-inv"
+                    highlight={dragHighlight?.containerId === 'player-inv' ? dragHighlight : undefined}
+                  />
+                </div>
+              }
+
+              {/* Rig Section */}
+              <div className="flex gap-4 items-start">
+                <div className="flex flex-col gap-1">
+                  <span className="text-zinc-500 text-xs font-bold uppercase tracking-wider mb-1">Rig</span>
+                  <EquipmentSlot slotId="vest" acceptedTypes={['vest']} className='w-30 h-30' />
+                </div>
+
+                {/* Associated Rig Container(s) */}
+                <div className="flex-1">
+                  {Object.values(containers)
+                    .filter((c: any) => c.type === 'vest')
+                    .map((c: any) => (
+                      <div key={c.id} className="flex flex-col">
+                        <span className="text-zinc-500 text-xs font-bold uppercase tracking-wider">{c.label}</span>
+                        <Container
+                          containerId={c.id}
+                          highlight={dragHighlight?.containerId === c.id ? dragHighlight : undefined}
+                        />
+                      </div>
+                    ))
+                  }
+                </div>
+              </div>
+
+              {/* Backpack Section */}
+              <div className="flex gap-4 items-start">
+                <div className="flex flex-col gap-1">
+                  <span className="text-zinc-500 text-xs font-bold uppercase tracking-wider mb-1">Backpack</span>
+                  <EquipmentSlot slotId="backpack" acceptedTypes={['backpack']} className="w-30 h-30" />
+                </div>
+
+                {/* Associated Backpack Container(s) */}
+                <div className="flex-1">
+                  {Object.values(containers)
+                    .filter((c: any) => c.type === 'bag')
+                    .map((c: any) => (
+                      <div key={c.id} className="flex flex-col gap-1 p-2 bg-zinc-800/20 rounded border border-zinc-700/30">
+                        <span className="text-zinc-500 text-xs font-bold uppercase tracking-wider">{c.label}</span>
+                        <Container
+                          containerId={c.id}
+                          highlight={dragHighlight?.containerId === c.id ? dragHighlight : undefined}
+                        />
+                      </div>
+                    ))
+                  }
+                </div>
+              </div>
+            </div>
+
+            {/* RIGHT: Loot / Stash / Storage */}
+            <div className="flex-1 flex flex-col gap-4 overflow-y-auto overflow-x-hidden min-w-[300px] border-l border-zinc-800/50 pl-6">
+              <h2 className="text-zinc-400 text-sm font-bold uppercase tracking-wider mb-2">Vicinity / Loot</h2>
               {Object.values(containers)
-                .filter(c => c.id !== 'player-inv')
-                .map(c => (
-                  <div key={c.id} className="mb-4">
+                .filter((c: any) => c.id.startsWith('drop-') || c.id.startsWith('stash-'))
+                .map((c: any) => (
+                  <div key={c.id} className="flex flex-col gap-1 p-2 bg-zinc-800/20 rounded border border-zinc-700/30">
+                    <span className="text-zinc-500 text-xs font-bold uppercase tracking-wider">{c.label}</span>
                     <Container
                       containerId={c.id}
                       highlight={dragHighlight?.containerId === c.id ? dragHighlight : undefined}
@@ -387,10 +537,17 @@ function App() {
                   </div>
                 ))
               }
+              {/* Placeholder if empty */}
+              {Object.values(containers).filter((c: any) => c.id.startsWith('drop-') || c.id.startsWith('stash-')).length === 0 && (
+                <div className="flex items-center justify-center flex-1 opacity-20 text-zinc-500 text-sm italic">
+                  No active loot nearby
+                </div>
+              )}
             </div>
+
           </div>
 
-          <footer className="mt-6 pt-4 border-t border-zinc-700/50 flex justify-between text-zinc-500 text-sm font-medium items-center">
+          <footer className="mt-6 pt-4 border-t border-zinc-700/50 flex justify-between text-zinc-500 text-sm font-medium items-center shrink-0">
             {containers['player-inv'] && (
               <div className="flex flex-col w-full max-w-md gap-1">
                 <div className="flex justify-between">

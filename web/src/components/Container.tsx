@@ -87,13 +87,11 @@ export const Container: React.FC<ContainerProps> = ({ containerId, highlight }) 
 
     return (
         <div className="flex flex-col gap-2">
-            <div className="text-zinc-400 text-xs uppercase font-bold tracking-wider px-1">
-                {container.label}
-            </div>
+
 
             <div
                 ref={setNodeRef}
-                className="relative p-3 bg-black/40 rounded-lg border border-white/5 shadow-inner"
+                className="relative bg-black/40 rounded-lg p-2 w-fit h-fit"
                 id={containerId}
             >
                 <div
@@ -107,8 +105,8 @@ export const Container: React.FC<ContainerProps> = ({ containerId, highlight }) 
                     {renderSlots()}
                 </div>
 
-                <div className="absolute top-3 left-3 w-full h-full pointer-events-none">
-                    <div className="relative pointer-events-auto">
+                <div className="absolute top-0 left-0 w-full h-full pointer-events-none">
+                    <div className="relative pointer-events-auto top-2 left-2">
                         {items.map((item, index) => (
                             <Item
                                 key={`${item.name}-${index}`}

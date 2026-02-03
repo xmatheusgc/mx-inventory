@@ -1,9 +1,6 @@
 import { create } from 'zustand';
 
-interface GridSize {
-    width: number;
-    height: number;
-}
+export type ItemType = 'weapon_primary' | 'weapon_secondary' | 'weapon_pistol' | 'weapon_melee' | 'helmet' | 'armor' | 'vest' | 'backpack' | 'generic';
 
 interface Item {
     name: string;
@@ -14,6 +11,12 @@ interface Item {
     size?: { x: number; y: number };
     weight?: number;
     rotated?: boolean;
+    type?: ItemType;
+}
+
+interface GridSize {
+    width: number;
+    height: number;
 }
 
 export interface ContainerData {
@@ -30,8 +33,10 @@ export interface ContainerData {
 interface InventoryState {
     isOpen: boolean;
     containers: Record<string, ContainerData>;
+    equipment: Record<string, Item | null>; // head, body, primary, etc.
     setOpen: (isOpen: boolean) => void;
     setContainerData: (id: string, data: ContainerData) => void;
+    setEquipment: (data: Record<string, Item | null>) => void;
     moveItem: (
         fromContainerId: string,
         toContainerId: string,
@@ -41,17 +46,32 @@ interface InventoryState {
     ) => void;
     rotateItem: (containerId: string, itemName: string) => void;
     updateContainerWeight: (containerId: string, weight: number) => void;
+    equipItem: (slot: string, item: Item, fromContainerId: string) => void;
+    unequipItem: (slot: string, toContainerId: string, targetSlot: { x: number, y: number }) => void;
 }
 
 export const useInventoryStore = create<InventoryState>((set) => ({
     isOpen: false,
     containers: {},
-    setOpen: (isOpen) => set({ isOpen }),
-    setContainerData: (id, data) =>
-        set((state) => ({
+    equipment: {
+        head: null,
+        armor: null,
+        legs: null,
+        backpack: null,
+        primary: null,
+        secondary: null,
+        pistol: null,
+        melee: null,
+        vest: null,
+    },
+    setOpen: (isOpen: boolean) => set({ isOpen }),
+    setContainerData: (id: string, data: ContainerData) =>
+        set((state: InventoryState) => ({
             containers: { ...state.containers, [id]: data }
         })),
-    updateContainerWeight: (id, weight) => set((state) => {
+    setEquipment: (data: Record<string, Item | null>) => set({ equipment: data }),
+
+    updateContainerWeight: (id: string, weight: number) => set((state: InventoryState) => {
         const container = state.containers[id];
         if (!container) return state;
         return {
@@ -62,14 +82,14 @@ export const useInventoryStore = create<InventoryState>((set) => ({
         };
     }),
 
-    moveItem: (fromContainerId, toContainerId, itemName, targetSlot, rotated) => {
-        set((state) => {
+    moveItem: (fromContainerId: string, toContainerId: string, itemName: string, targetSlot: { x: number; y: number }, rotated?: boolean) => {
+        set((state: InventoryState) => {
             const sourceContainer = state.containers[fromContainerId];
             const targetContainer = state.containers[toContainerId];
 
             if (!sourceContainer || !targetContainer) return state;
 
-            const itemIndex = sourceContainer.items.findIndex(i => i.name === itemName);
+            const itemIndex = sourceContainer.items.findIndex((i: Item) => i.name === itemName);
             if (itemIndex === -1) return state;
 
             const item = sourceContainer.items[itemIndex];
@@ -94,7 +114,7 @@ export const useInventoryStore = create<InventoryState>((set) => ({
                     for (let py = 0; py < size.y; py++) {
                         const slotToCheck = { x: targetSlot.x + px, y: targetSlot.y + py };
                         const isValid = targetContainer.validSlots.some(
-                            vs => vs.x === slotToCheck.x && vs.y === slotToCheck.y
+                            (vs: { x: number, y: number }) => vs.x === slotToCheck.x && vs.y === slotToCheck.y
                         );
                         if (!isValid) return state;
                     }
@@ -103,11 +123,8 @@ export const useInventoryStore = create<InventoryState>((set) => ({
 
             // 2.5 Weight Check
             if (fromContainerId !== toContainerId && targetContainer.maxWeight !== undefined) {
-                const itemDefWeight = item.weight || 0; // Ensure items have weight prop
+                const itemDefWeight = item.weight || 0;
                 const currentWeight = targetContainer.weight || 0;
-
-                // We need to calculate total weight more robustly if we want live updates
-                // For now, let's assume item.weight is populated.
                 if (currentWeight + (itemDefWeight * item.count) > targetContainer.maxWeight) {
                     console.log("Overweight!");
                     return state;
@@ -115,7 +132,7 @@ export const useInventoryStore = create<InventoryState>((set) => ({
             }
 
             // 3. Collision Check
-            const hasCollision = targetContainer.items.some((otherItem) => {
+            const hasCollision = targetContainer.items.some((otherItem: Item) => {
                 if (fromContainerId === toContainerId && otherItem.name === item.name) return false;
 
                 const otherRotated = !!otherItem.rotated;
@@ -160,12 +177,12 @@ export const useInventoryStore = create<InventoryState>((set) => ({
         });
     },
 
-    rotateItem: (containerId, itemName) => {
-        set((state) => {
+    rotateItem: (containerId: string, itemName: string) => {
+        set((state: InventoryState) => {
             const container = state.containers[containerId];
             if (!container) return state;
 
-            const itemIndex = container.items.findIndex(i => i.name === itemName);
+            const itemIndex = container.items.findIndex((i: Item) => i.name === itemName);
             if (itemIndex === -1) return state;
 
             const item = container.items[itemIndex];
@@ -181,5 +198,46 @@ export const useInventoryStore = create<InventoryState>((set) => ({
                 }
             };
         });
-    }
+    },
+
+    equipItem: (slot: string, item: Item, fromContainerId: string) => set((state: InventoryState) => {
+        const sourceContainer = state.containers[fromContainerId];
+        if (!sourceContainer) return state;
+
+        // Remove from source
+        const newSourceItems = sourceContainer.items.filter((i: Item) => i.name !== item.name);
+
+        // Add to equipment
+        const newEquipment = { ...state.equipment, [slot]: item };
+
+        return {
+            containers: {
+                ...state.containers,
+                [fromContainerId]: { ...sourceContainer, items: newSourceItems }
+            },
+            equipment: newEquipment
+        };
+    }),
+
+    unequipItem: (slot: string, toContainerId: string, targetSlot: { x: number, y: number }) => set((state: InventoryState) => {
+        const item = state.equipment[slot];
+        if (!item) return state;
+
+        const targetContainer = state.containers[toContainerId];
+        if (!targetContainer) return state;
+
+        // Remove from equipment
+        const newEquipment = { ...state.equipment, [slot]: null };
+
+        // Add to target container
+        const newTargetItems = [...targetContainer.items, { ...item, slot: targetSlot, rotated: false }];
+
+        return {
+            containers: {
+                ...state.containers,
+                [toContainerId]: { ...targetContainer, items: newTargetItems }
+            },
+            equipment: newEquipment
+        };
+    })
 }));

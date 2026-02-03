@@ -49,9 +49,9 @@ RegisterNetEvent('mx-inv:server:openInventory', function()
         id = 'player-inv',
         type = 'player',
         label = 'Player Inventory',
-        size = { width = 6, height = 10 },
+        size = Config.Inventory.Slots,
         items = containers.player or {},
-        maxWeight = 40.0,
+        maxWeight = Config.Inventory.MaxWeight,
         weight = GetContainerWeight(containers.player or {})
     }
 

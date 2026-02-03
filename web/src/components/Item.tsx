@@ -17,6 +17,8 @@ interface ItemProps {
     slot: { x: number; y: number }; // 1-indexed
     isDragging?: boolean;
     rotated?: boolean;
+    isEquipment?: boolean;
+    type?: string;
 }
 
 // Pure Presentational Component
@@ -126,7 +128,7 @@ export const ItemView: React.FC<ItemProps & {
 
 // Connected Component
 export const Item: React.FC<ItemProps> = (props) => {
-    const { name, size, slot, rotated } = props;
+    const { name, size, slot, rotated, isEquipment } = props;
 
     const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
         id: name,
@@ -135,7 +137,17 @@ export const Item: React.FC<ItemProps> = (props) => {
 
     const currentSize = (rotated) ? { x: size?.y || 1, y: size?.x || 1 } : (size || { x: 1, y: 1 });
 
-    const style = {
+    const style = isEquipment ? {
+        // Equipment Item Style: Centered, relative to slot, FULL FILL
+        width: '100%',
+        height: '100%',
+        position: 'absolute' as const, // Change to absolute to ensure it fills the relative parent
+        top: 0,
+        left: 0,
+        zIndex: isDragging ? 100 : undefined,
+        transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
+    } : {
+        // Grid Item Style: Absolute, based on slot index
         width: currentSize.x * SLOT_SIZE + (currentSize.x - 1) * GAP,
         height: currentSize.y * SLOT_SIZE + (currentSize.y - 1) * GAP,
         left: (slot.x - 1) * (SLOT_SIZE + GAP),

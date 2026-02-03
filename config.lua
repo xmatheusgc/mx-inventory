@@ -4,8 +4,8 @@ Config.Debug = true
 
 -- Inventory Configuration
 Config.Inventory = {
-    Slots = { width = 6, height = 10 }, -- Player Main Inventory
-    MaxWeight = 40.0                    -- kg
+    Slots = { width = 6, height = 3 }, -- Player Main Inventory
+    MaxWeight = 40.0                   -- kg
 }
 
 -- Item Definitions
