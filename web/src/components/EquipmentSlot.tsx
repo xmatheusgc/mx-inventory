@@ -35,7 +35,7 @@ export const EquipmentSlot: React.FC<EquipmentSlotProps> = ({
             <div
                 ref={setNodeRef}
                 className={`
-                    relative bg-zinc-800/20 border border-zinc-700/50 rounded-sm overflow-hidden flex items-center justify-center shrink-0
+                    relative bg-zinc-800/20 border border-zinc-700/50 overflow-hidden flex items-center justify-center shrink-0
                     ${isOver ? 'border-orange-500/80 bg-orange-500/10' : ''}
                     transition-colors duration-200
                     ${className}

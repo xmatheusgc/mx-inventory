@@ -6,6 +6,7 @@ import { ItemView } from './components/Item';
 import { EquipmentPanel } from './components/EquipmentPanel';
 import { EquipmentSlot } from './components/EquipmentSlot';
 import { snapCenterToCursor } from './utils/modifiers';
+import { CONTAINER_LAYOUTS } from './config/layouts';
 import { DndContext, type DragEndEvent, type DragMoveEvent, useSensor, useSensors, PointerSensor, rectIntersection, DragOverlay } from '@dnd-kit/core';
 
 // Mock data
@@ -57,7 +58,7 @@ debugData([
 ]);
 
 const SLOT_SIZE = 64;
-const GAP = 2;
+const GAP = 0; // User requested no spacing
 
 interface HighlightState {
   containerId: string;
@@ -159,6 +160,37 @@ function App() {
     setActiveId(event.active.id);
   };
 
+  // Helper to parse complex Drop IDs (e.g. "vest-1::pocket::0")
+  const parseContainerId = useCallback((id: string) => {
+    if (!id) return { baseId: id, regionOffset: { x: 0, y: 0 } };
+
+    const parts = id.split('::pocket::');
+    const baseId = parts[0];
+
+    if (parts.length < 2) return { baseId, regionOffset: { x: 0, y: 0 } };
+
+    const pocketIdx = parseInt(parts[1]);
+    const container = containers[baseId];
+    if (!container) return { baseId, regionOffset: { x: 0, y: 0 } };
+
+    // Resolve Layout
+    const layout = CONTAINER_LAYOUTS[container.id] || CONTAINER_LAYOUTS[container.label] || (container.type === 'vest' ? CONTAINER_LAYOUTS['vest'] : CONTAINER_LAYOUTS['backpack']);
+
+    // Flatten pockets from rows to find the correct index
+    const allPockets = layout.rows.flatMap((r: any) => r.pockets);
+
+    if (allPockets && allPockets[pocketIdx]) {
+      const pocket = allPockets[pocketIdx];
+      return {
+        baseId,
+        regionOffset: { x: pocket.x - 1, y: pocket.y - 1 },
+        pocketRegion: pocket // Return full pocket info (width/height)
+      };
+    }
+
+    return { baseId, regionOffset: { x: 0, y: 0 } };
+  }, [containers]);
+
   const calculateTargetSlot = useCallback((overId: string, activeRect: any) => {
     const containerElement = document.getElementById(overId);
     if (!containerElement) return null;
@@ -176,14 +208,33 @@ function App() {
     return { x: slotX, y: slotY };
   }, []);
 
-  const validatePlacement = useCallback((containerId: string, item: any, slot: { x: number; y: number }, rotation: boolean) => {
-    const container = containers[containerId];
+  const validatePlacement = useCallback((rawContainerId: string, item: any, relativeSlot: { x: number; y: number }, rotation: boolean) => {
+    const { baseId, regionOffset, pocketRegion } = parseContainerId(rawContainerId);
+    const container = containers[baseId];
     if (!container) return false;
+
+    // Convert Relative Slot -> Global Slot
+    const slot = {
+      x: relativeSlot.x + regionOffset.x,
+      y: relativeSlot.y + regionOffset.y
+    };
 
     const originalSize = item.size || { x: 1, y: 1 };
     const size = rotation ? { x: originalSize.y, y: originalSize.x } : originalSize;
 
-    // 1. Boundary Check
+    // 0. Pocket Boundary Check (Strict)
+    if (pocketRegion) {
+      if (
+        relativeSlot.x < 1 ||
+        relativeSlot.y < 1 ||
+        relativeSlot.x + size.x - 1 > pocketRegion.width ||
+        relativeSlot.y + size.y - 1 > pocketRegion.height
+      ) {
+        return false;
+      }
+    }
+
+    // 1. Global Boundary Check (Fallback)
     if (
       slot.x < 1 ||
       slot.y < 1 ||
@@ -227,13 +278,18 @@ function App() {
     if (hasCollision) return false;
 
     return true;
-  }, [containers]);
+  }, [containers, parseContainerId]);
 
   const updateDragHighlight = useCallback((overId: string, activeRect: any, rotation: boolean) => {
-    // Find item logic updated to include equipment if needed, but highlight usually only for grids
-    // Actually we might want highlight for equipment slots too, but that's handled by EquipmentSlot component visual
-    // So here we only care if overId is a container
-    if (!containers[overId]) {
+    if (!overId) {
+      setDragHighlight(undefined);
+      return;
+    }
+
+    const { baseId, regionOffset } = parseContainerId(overId);
+
+    // Only container logic here
+    if (!containers[baseId]) {
       setDragHighlight(undefined);
       return;
     }
@@ -245,30 +301,34 @@ function App() {
 
     if (!activeItem) return;
 
-    const targetSlot = calculateTargetSlot(overId, activeRect);
+    // calculateTargetSlot returns RELATIVE slot to the droppable element
+    const relativeSlot = calculateTargetSlot(overId, activeRect);
 
-    if (targetSlot) {
-      const isValid = validatePlacement(overId, activeItem, targetSlot, rotation);
+    if (relativeSlot) {
+      // Validate using Global Logic (inside the helper)
+      const isValid = validatePlacement(overId, activeItem, relativeSlot, rotation);
 
       const highlightSlots = [];
       const originalSize = activeItem.size || { x: 1, y: 1 };
       const size = rotation ? { x: originalSize.y, y: originalSize.x } : originalSize;
 
+      // Generate Highlight Slots (Visual / Relative)
       for (let x = 0; x < size.x; x++) {
         for (let y = 0; y < size.y; y++) {
-          highlightSlots.push({ x: targetSlot.x + x, y: targetSlot.y + y });
+          // Push GLOBAL coordinates for Container highlighting
+          highlightSlots.push({ x: relativeSlot.x + regionOffset.x + x, y: relativeSlot.y + regionOffset.y + y });
         }
       }
 
       setDragHighlight({
-        containerId: overId,
+        containerId: baseId,
         slots: highlightSlots,
         isValid
       });
     } else {
       setDragHighlight(undefined);
     }
-  }, [activeId, containers, equipment, calculateTargetSlot, validatePlacement]);
+  }, [activeId, containers, equipment, calculateTargetSlot, validatePlacement, parseContainerId]);
 
 
   const handleDragMove = (event: DragMoveEvent) => {
@@ -368,6 +428,8 @@ function App() {
 
     // --- CONTAINER LOGIC ---
     // Dropping into a container
+    const { baseId, regionOffset } = parseContainerId(toId);
+
     const containerElement = document.getElementById(toId);
     if (!containerElement) return;
 
@@ -383,28 +445,41 @@ function App() {
     const relativeX = itemRect.left - containerRect.left - PADDING_X;
     const relativeY = itemRect.top - containerRect.top - PADDING_Y;
 
-    const slotX = Math.max(1, Math.round(relativeX / (SLOT_SIZE + GAP)) + 1);
-    const slotY = Math.max(1, Math.round(relativeY / (SLOT_SIZE + GAP)) + 1);
+    // Relative Slot (Visual)
+    const relSlotX = Math.max(1, Math.round(relativeX / (SLOT_SIZE + GAP)) + 1);
+    const relSlotY = Math.max(1, Math.round(relativeY / (SLOT_SIZE + GAP)) + 1);
+
+    // Validate Placement BEFORE Moving
+    const isValidPlacement = validatePlacement(toId, item, { x: relSlotX, y: relSlotY }, finalRotation);
+
+    if (!isValidPlacement) {
+      // Option: Animate snap back?
+      return;
+    }
+
+    // Global Slot -> Add Offset
+    const slotX = relSlotX + regionOffset.x;
+    const slotY = relSlotY + regionOffset.y;
 
     // Un-equip if coming from equipment
     if (fromContainerId.startsWith('equip-')) {
       const sourceSlotId = fromContainerId.replace('equip-', '');
-      unequipItem(sourceSlotId, toId, { x: slotX, y: slotY });
+      unequipItem(sourceSlotId, baseId, { x: slotX, y: slotY });
 
       fetchNui('unequipItem', {
         item: itemName,
         fromSlot: sourceSlotId,
-        to: toId,
+        to: baseId,
         slot: { x: slotX, y: slotY }
       });
     } else {
       // Standard Move
-      moveItem(fromContainerId, toId, itemName, { x: slotX, y: slotY }, finalRotation);
+      moveItem(fromContainerId, baseId, itemName, { x: slotX, y: slotY }, finalRotation);
 
       fetchNui('moveItem', {
         item: itemName,
         from: fromContainerId,
-        to: toId,
+        to: baseId,
         slot: { x: slotX, y: slotY },
         rotated: finalRotation
       });
@@ -442,127 +517,193 @@ function App() {
       onDragMove={handleDragMove}
       onDragEnd={handleDragEnd}
     >
-      <div className="flex items-center justify-center min-h-screen bg-black/40 text-white font-sans selection:bg-orange-500/30">
-        <div className="flex flex-col p-6 bg-zinc-900/95 backdrop-blur-xl border border-zinc-700/50 rounded-xl shadow-2xl w-full max-w-[95vw] h-[90vh] overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-          <header className="flex items-center justify-between mb-6 pb-4 border-b border-zinc-700/50 shrink-0">
-            <h1 className="text-2xl font-bold text-zinc-100 tracking-tight flex items-center gap-3">
-              <span className="w-2 h-8 bg-orange-500 rounded-full shadow-[0_0_15px_rgba(249,115,22,0.5)]" />
-              TACTICAL GEAR
-            </h1>
-          </header>
+      <div className="flex items-center justify-center min-h-screen w-full h-full bg-black/40 text-white font-sans selection:bg-orange-500/30 p-10">
+        {/* 3-Column Layout - Floating/Immersive */}
+        <div className="flex flex-1 gap-8 max-w-[90vw] h-[85vh] mx-auto">
+          {/* LEFT: Equipment */}
+          <div className="flex-1 flex flex-col gap-4 overflow-hidden min-w-[300px] pt-12 border bg-black/60 border-white/10">
+            <EquipmentPanel />
+          </div>
 
-          {/* 3-Column Layout */}
-          <div className="flex flex-1 gap-6 overflow-hidden min-h-0">
+          {/* CENTER: Player Inventory (Grids) */}
+          <div className="flex-1 flex flex-col gap-4 overflow-y-auto overflow-x-hidden min-w-[500px] pt-12 border bg-black/60 border-white/10">
 
-            {/* LEFT: Equipment */}
-            <div className="flex-none">
-              <EquipmentPanel />
-            </div>
-
-            {/* CENTER: Player Inventory (Grids) */}
-            <div className="flex-1 flex flex-col gap-4 overflow-y-auto overflow-x-hidden min-w-[300px]">
-
-              {/* Player Main Pockets/Inventory */}
-              {containers['player-inv'] &&
-                <div className="flex flex-col gap-1 p-2">
-                  <span className="text-zinc-500 text-xs font-bold uppercase tracking-wider">Pockets / Belt</span>
+            {/* 1. Pockets (Always Top) */}
+            {containers['player-inv'] &&
+              <div className="flex flex-col gap-1 shrink-0 px-4">
+                <h2 className="text-zinc-500 text-xs font-bold uppercase tracking-wider pt-2">Pockets</h2>
+                <div className="flex bg-black/40 overflow-hidden w-fit p-1">
                   <Container
                     containerId="player-inv"
                     highlight={dragHighlight?.containerId === 'player-inv' ? dragHighlight : undefined}
                   />
                 </div>
-              }
-
-              {/* Rig Section */}
-              <div className="flex gap-4 items-start">
-                <div className="flex flex-col gap-1">
-                  <span className="text-zinc-500 text-xs font-bold uppercase tracking-wider mb-1">Rig</span>
-                  <EquipmentSlot slotId="vest" acceptedTypes={['vest']} className='w-30 h-30' />
-                </div>
-
-                {/* Associated Rig Container(s) */}
-                <div className="flex-1">
-                  {Object.values(containers)
-                    .filter((c: any) => c.type === 'vest')
-                    .map((c: any) => (
-                      <div key={c.id} className="flex flex-col">
-                        <span className="text-zinc-500 text-xs font-bold uppercase tracking-wider">{c.label}</span>
-                        <Container
-                          containerId={c.id}
-                          highlight={dragHighlight?.containerId === c.id ? dragHighlight : undefined}
-                        />
-                      </div>
-                    ))
-                  }
-                </div>
               </div>
+            }
 
-              {/* Backpack Section */}
-              <div className="flex gap-4 items-start">
-                <div className="flex flex-col gap-1">
-                  <span className="text-zinc-500 text-xs font-bold uppercase tracking-wider mb-1">Backpack</span>
-                  <EquipmentSlot slotId="backpack" acceptedTypes={['backpack']} className="w-30 h-30" />
+            {/* 2. Vest Section (Slot + Container) */}
+            <div className="flex flex-col gap-1 shrink-0 px-4">
+              <h2 className="text-zinc-500 text-xs font-bold uppercase tracking-wider pt-2">Tactical Vest</h2>
+              <div className="flex bg-black/40 overflow-hidden w-fit p-1">
+                {/* Slot */}
+                <div className="flex flex-col gap-2 shrink-0">
+                  <EquipmentSlot slotId="vest" label="" acceptedTypes={['vest']} className="w-32 h-32" />
                 </div>
 
-                {/* Associated Backpack Container(s) */}
-                <div className="flex-1">
+                {/* Container (Scrollable Area) */}
+                <div className="flex-1 overflow-x-auto custom-scrollbar-hide">
                   {Object.values(containers)
-                    .filter((c: any) => c.type === 'bag')
-                    .map((c: any) => (
-                      <div key={c.id} className="flex flex-col gap-1 p-2 bg-zinc-800/20 rounded border border-zinc-700/30">
-                        <span className="text-zinc-500 text-xs font-bold uppercase tracking-wider">{c.label}</span>
-                        <Container
-                          containerId={c.id}
-                          highlight={dragHighlight?.containerId === c.id ? dragHighlight : undefined}
-                        />
-                      </div>
-                    ))
-                  }
+                    .filter((c: any) => c.type === 'vest' && equipment?.vest?.name === c.id)
+                    .map((c: any) => {
+                      const layout = CONTAINER_LAYOUTS[c.id] || CONTAINER_LAYOUTS[c.name] || CONTAINER_LAYOUTS['vest'];
+
+                      if (layout) {
+                        return (
+                          <div key={c.id} className="flex flex-col gap-1 p-2">
+                            {layout.rows.map((row: any, rowIdx: number) => (
+                              <div key={rowIdx} className={row.className || "flex justify-center gap-2"}>
+                                {row.pockets.map((pocket: any, pIdx: number) => {
+                                  // Global Index Calculation
+                                  let globalIndex = 0;
+                                  for (let i = 0; i < rowIdx; i++) {
+                                    globalIndex += layout.rows[i].pockets.length;
+                                  }
+                                  globalIndex += pIdx;
+
+                                  return (
+                                    <div key={globalIndex} className={`flex flex-col border border-white/20 ${pocket.className || ''}`}>
+                                      <Container
+                                        containerId={c.id}
+                                        droppableId={`${c.id}::pocket::${globalIndex}`}
+                                        region={pocket}
+                                        highlight={dragHighlight?.containerId === c.id ? dragHighlight : undefined}
+                                      />
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            ))}
+                          </div>
+                        )
+                      }
+
+                      return (
+                        <div key={c.id} className="flex flex-col gap-1">
+                          <Container
+                            containerId={c.id}
+                            highlight={dragHighlight?.containerId === c.id ? dragHighlight : undefined}
+                          />
+                        </div>
+                      )
+                    })}
                 </div>
               </div>
             </div>
 
-            {/* RIGHT: Loot / Stash / Storage */}
-            <div className="flex-1 flex flex-col gap-4 overflow-y-auto overflow-x-hidden min-w-[300px] border-l border-zinc-800/50 pl-6">
-              <h2 className="text-zinc-400 text-sm font-bold uppercase tracking-wider mb-2">Vicinity / Loot</h2>
-              {Object.values(containers)
-                .filter((c: any) => c.id.startsWith('drop-') || c.id.startsWith('stash-'))
-                .map((c: any) => (
-                  <div key={c.id} className="flex flex-col gap-1 p-2 bg-zinc-800/20 rounded border border-zinc-700/30">
-                    <span className="text-zinc-500 text-xs font-bold uppercase tracking-wider">{c.label}</span>
+            {/* 3. Backpack Section (Slot + Container) */}
+            <div className="flex flex-col gap-1 shrink-0 px-4 pb-4">
+              <h2 className="text-zinc-500 text-xs font-bold uppercase tracking-wider pt-2">Backpack</h2>
+              <div className="flex bg-black/40 overflow-hidden w-fit p-1">
+                {/* Slot */}
+                <div className="flex flex-col gap-2 shrink-0">
+                  <EquipmentSlot slotId="backpack" label="" acceptedTypes={['backpack']} className="w-32 h-32" />
+                </div>
+
+                {/* Container (Scrollable Area) */}
+                <div className="flex-1 overflow-x-auto custom-scrollbar-hide">
+
+                  {/* Container (if exists) */}
+                  {Object.values(containers)
+                    .filter((c: any) => c.type === 'bag' && equipment?.backpack?.name === c.id)
+                    .map((c: any) => {
+                      const layout = CONTAINER_LAYOUTS[c.id] || CONTAINER_LAYOUTS[c.name] || CONTAINER_LAYOUTS['backpack'];
+
+                      if (layout) {
+                        return (
+                          <div key={c.id} className="flex flex-col gap-1 p-2">
+                            {layout.rows.map((row: any, rowIdx: number) => (
+                              <div key={rowIdx} className={row.className || "flex justify-center gap-2"}>
+                                {row.pockets.map((pocket: any, pIdx: number) => {
+                                  // Global Index Calculation
+                                  let globalIndex = 0;
+                                  for (let i = 0; i < rowIdx; i++) {
+                                    globalIndex += layout.rows[i].pockets.length;
+                                  }
+                                  globalIndex += pIdx;
+
+                                  return (
+                                    <div key={globalIndex} className={`flex flex-col border border-white/20 ${pocket.className || ''}`}>
+                                      <Container
+                                        containerId={c.id}
+                                        droppableId={`${c.id}::pocket::${globalIndex}`}
+                                        region={pocket}
+                                        highlight={dragHighlight?.containerId === c.id ? dragHighlight : undefined}
+                                      />
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            ))}
+                          </div>
+                        )
+                      }
+
+                      return (
+                        <div key={c.id} className="flex flex-col gap-1">
+                          <Container
+                            containerId={c.id}
+                            highlight={dragHighlight?.containerId === c.id ? dragHighlight : undefined}
+                          />
+                        </div>
+                      )
+                    })}
+                </div>
+              </div>
+            </div>
+
+            {/* 4. Other Containers */}
+            {Object.values(containers)
+              .filter((c: any) => c.id !== 'player-inv' && c.type !== 'vest' && c.type !== 'bag' && !c.id.startsWith('drop-') && !c.id.startsWith('stash-'))
+              .map((c: any) => (
+                <div key={c.id} className="flex flex-col gap-1 shrink-0 px-4 pb-4">
+                  <h2 className="text-zinc-500 text-xs font-bold uppercase tracking-wider pt-2">{c.label}</h2>
+                  <div className="p-4 border border-white/5 bg-black/40 rounded-sm">
                     <Container
                       containerId={c.id}
                       highlight={dragHighlight?.containerId === c.id ? dragHighlight : undefined}
                     />
                   </div>
-                ))
-              }
-              {/* Placeholder if empty */}
-              {Object.values(containers).filter((c: any) => c.id.startsWith('drop-') || c.id.startsWith('stash-')).length === 0 && (
-                <div className="flex items-center justify-center flex-1 opacity-20 text-zinc-500 text-sm italic">
-                  No active loot nearby
                 </div>
-              )}
-            </div>
-
+              ))
+            }
           </div>
 
-          <footer className="mt-6 pt-4 border-t border-zinc-700/50 flex justify-between text-zinc-500 text-sm font-medium items-center shrink-0">
-            {containers['player-inv'] && (
-              <div className="flex flex-col w-full max-w-md gap-1">
-                <div className="flex justify-between">
-                  <span>WEIGHT</span>
-                  <span><span className="text-zinc-300">{containers['player-inv'].weight?.toFixed(1) || '0.0'}</span> / {containers['player-inv'].maxWeight?.toFixed(1) || '40.0'} KG</span>
+          {/* RIGHT: Loot / Stash / Storage */}
+          <div className="flex-1 flex flex-col gap-4 overflow-y-auto overflow-x-hidden min-w-[300px] pt-12 border bg-black/60 border-white/10">
+            {Object.values(containers)
+              .filter((c: any) => c.id.startsWith('drop-') || c.id.startsWith('stash-'))
+              .map((c: any) => (
+                <div key={c.id} className="flex flex-col gap-1 p-4 bg-black/40 rounded-sm border border-white/5">
+                  <span className="text-zinc-500 text-xs font-bold uppercase tracking-wider">{c.label}</span>
+                  <Container
+                    containerId={c.id}
+                    highlight={dragHighlight?.containerId === c.id ? dragHighlight : undefined}
+                  />
                 </div>
+              ))
+            }
+            {Object.values(containers).filter((c: any) => c.id.startsWith('drop-') || c.id.startsWith('stash-')).length === 0 && (
+              <div className="flex items-center justify-center flex-1 opacity-20 text-zinc-500 text-sm italic">
+                No active loot nearby
               </div>
             )}
-          </footer>
+          </div>
         </div>
       </div>
       <DragOverlay modifiers={[snapCenterToCursor]}>
         {activeId ? renderDragOverlay() : null}
       </DragOverlay>
-    </DndContext>
+    </DndContext >
   );
 }
 

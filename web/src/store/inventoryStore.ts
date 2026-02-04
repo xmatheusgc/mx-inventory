@@ -52,17 +52,42 @@ interface InventoryState {
 
 export const useInventoryStore = create<InventoryState>((set) => ({
     isOpen: false,
-    containers: {},
+    containers: {
+        'player-inv': {
+            id: 'player-inv',
+            type: 'player',
+            label: 'Player Inventory',
+            size: { width: 5, height: 2 },
+            items: [],
+            validSlots: undefined
+        },
+        'rig_st_tipo_4': {
+            id: 'rig_st_tipo_4',
+            type: 'vest',
+            label: 'ST Tipo 4',
+            size: { width: 4, height: 10 },
+            items: [],
+            validSlots: undefined
+        },
+        'mochila_tatica_expansivel_luc': {
+            id: 'mochila_tatica_expansivel_luc',
+            type: 'bag',
+            label: 'Mochila Tática Expansível Luc',
+            size: { width: 5, height: 10 },
+            items: [],
+            validSlots: undefined
+        }
+    },
     equipment: {
         head: null,
         armor: null,
         legs: null,
-        backpack: null,
+        backpack: { name: 'mochila_tatica_expansivel_luc', count: 1, slot: { x: 1, y: 1 }, size: { x: 2, y: 2 }, type: 'backpack' },
         primary: null,
         secondary: null,
         pistol: null,
         melee: null,
-        vest: null,
+        vest: { name: 'rig_st_tipo_4', count: 1, slot: { x: 1, y: 1 }, size: { x: 2, y: 2 }, type: 'vest' },
     },
     setOpen: (isOpen: boolean) => set({ isOpen }),
     setContainerData: (id: string, data: ContainerData) =>

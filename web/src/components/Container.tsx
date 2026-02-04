@@ -5,31 +5,45 @@ import { useDroppable } from '@dnd-kit/core';
 import { twMerge } from 'tailwind-merge';
 
 const SLOT_SIZE = 64;
-const GAP = 2;
+const GAP = 0;
 
 interface HighlightData {
     slots: { x: number; y: number }[];
     isValid: boolean;
 }
 
-interface ContainerProps {
-    containerId: string;
-    highlight?: HighlightData;
+
+interface Region {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
 }
 
-export const Container: React.FC<ContainerProps> = ({ containerId, highlight }) => {
+interface ContainerProps {
+    containerId: string;
+    droppableId?: string; // Unique ID for dnd-kit (if different from containerId)
+    highlight?: HighlightData;
+    region?: Region; // Only render slots within this region
+}
+
+export const Container: React.FC<ContainerProps> = ({ containerId, droppableId, highlight, region }) => {
     const { containers } = useInventoryStore();
     const container = containers[containerId];
 
     const { setNodeRef } = useDroppable({
-        id: containerId,
-        data: { containerId }
+        id: droppableId || containerId,
+        data: { containerId, region } // Pass region data for drag handler to know offsets if needed
     });
 
     if (!container) return null;
 
-    const { size, items, validSlots } = container;
-    const totalWidth = size.width * (SLOT_SIZE + GAP) - GAP;
+    // Use region size if provided, otherwise container size
+    const displayWidth = region ? region.width : container.size.width;
+    const displayHeight = region ? region.height : container.size.height;
+
+    const { items, validSlots } = container;
+
 
     const isValidSlot = (x: number, y: number) => {
         if (!validSlots) return true;
@@ -43,8 +57,17 @@ export const Container: React.FC<ContainerProps> = ({ containerId, highlight }) 
 
     const renderSlots = () => {
         const slots = [];
-        for (let y = 1; y <= size.height; y++) {
-            for (let x = 1; x <= size.width; x++) {
+
+        // Loop based on Display Grid (Region or Full)
+        // If region is provided, we loop from region.y to region.y + height
+        const startY = region ? region.y : 1;
+        const endY = region ? region.y + displayHeight - 1 : container.size.height;
+        const startX = region ? region.x : 1;
+        const endX = region ? region.x + displayWidth - 1 : container.size.width;
+
+
+        for (let y = startY; y <= endY; y++) {
+            for (let x = startX; x <= endX; x++) {
                 const isValid = isValidSlot(x, y);
                 const highlighted = isHighlighted(x, y);
 
@@ -53,8 +76,7 @@ export const Container: React.FC<ContainerProps> = ({ containerId, highlight }) 
                     <div
                         key={`${x}-${y}`}
                         className={twMerge(
-                            "relative bg-zinc-800/40 border border-zinc-700/30 rounded-[2px] transition-colors",
-                            // Highlight Overlay
+                            "relative bg-zinc-800/40 border border-zinc-700/30 transition-colors",
                             highlighted && (highlight?.isValid
                                 ? "bg-green-500/20 border-green-500/50"
                                 : "bg-red-500/20 border-red-500/50")
@@ -85,36 +107,69 @@ export const Container: React.FC<ContainerProps> = ({ containerId, highlight }) 
         return slots;
     };
 
+    // Filter Items that are INSIDE this region
+    const visibleItems = region
+        ? items.filter(item => {
+            // Check if item's slot is within the region
+            // item.slot is top-left. We need to check if it matches the grid we are drawing.
+            // actually, an item belongs to this region if its top-left is inside the region?
+            // OR if its mostly inside. Simplest is top-left.
+            return item.slot.x >= region.x && item.slot.x < region.x + region.width &&
+                item.slot.y >= region.y && item.slot.y < region.y + region.height;
+        })
+        : items;
+
     return (
         <div className="flex flex-col gap-2">
-
-
             <div
                 ref={setNodeRef}
-                className="relative bg-black/40 rounded-lg p-2 w-fit h-fit"
-                id={containerId}
+                className="relative bg-black/40 w-fit h-fit overflow-hidden"
+                id={droppableId || containerId}
             >
+                {/* Grid Layer */}
                 <div
                     style={{
                         display: 'grid',
-                        gridTemplateColumns: `repeat(${size.width}, ${SLOT_SIZE}px)`,
+                        gridTemplateColumns: `repeat(${displayWidth}, ${SLOT_SIZE}px)`,
                         gap: GAP,
-                        width: totalWidth + GAP,
                     }}
                 >
                     {renderSlots()}
                 </div>
 
+                {/* Items Layer - Adjust positioning relative to Region */}
                 <div className="absolute top-0 left-0 w-full h-full pointer-events-none">
-                    <div className="relative pointer-events-auto top-2 left-2">
-                        {items.map((item, index) => (
-                            <Item
-                                key={`${item.name}-${index}`}
-                                {...item}
-                            />
-                        ))}
+                    <div className="relative pointer-events-auto">
+                        {visibleItems.map((item, index) => {
+                            // Correct position if rendering a region
+                            // If region starts at x=1, y=3.
+                            // And item is at x=1, y=3. 
+                            // Visually, that item should be at 0,0 inside THIS component.
+
+                            const offsetX = region ? (region.x - 1) : 0;
+                            const offsetY = region ? (region.y - 1) : 0;
+
+                            // We copy the item but shift its visual slot for rendering
+                            const visualItem = {
+                                ...item,
+                                slot: {
+                                    x: item.slot.x - offsetX,
+                                    y: item.slot.y - offsetY
+                                }
+                            };
+
+                            return (
+                                <Item
+                                    key={`${item.name}-${index}`}
+                                    {...visualItem}
+                                />
+                            )
+                        })}
                     </div>
                 </div>
+
+                {/* Border Overlay */}
+                <div className="absolute top-0 left-0 w-full h-full pointer-events-none border border-zinc-700/30" />
             </div>
         </div>
     );

@@ -6,7 +6,7 @@ import { ContextMenu } from './ContextMenu';
 
 // Constants for slot size (must match Grid)
 const SLOT_SIZE = 64;
-const GAP = 2; // px
+const GAP = 0; // px
 
 interface ItemProps {
     name: string;
@@ -88,7 +88,7 @@ export const ItemView: React.FC<ItemProps & {
                 {...listeners}
                 {...attributes}
                 className={twMerge(
-                    "absolute bg-zinc-800 border border-zinc-600 rounded flex flex-col items-center justify-center select-none overflow-hidden transition-none shadow-lg hover:border-orange-500/50 group cursor-grab active:cursor-grabbing",
+                    "absolute bg-zinc-800 border border-zinc-600 flex flex-col items-center justify-center select-none overflow-hidden transition-none shadow-lg hover:border-orange-500/50 group cursor-grab active:cursor-grabbing",
                     (isDragging || isOverlay) && "z-50 shadow-orange-500/20 scale-105 ring-2 ring-orange-500",
                     isDragging && !isOverlay && "opacity-50" // Ghost item visible but transparent
                 )}
@@ -104,7 +104,7 @@ export const ItemView: React.FC<ItemProps & {
                     <span className="text-xs text-center text-gray-300 px-1 pointer-events-none">{label || name}</span>
                 )}
                 {count > 1 && (
-                    <span className="absolute bottom-0 right-0 p-0.5 text-[0.6rem] font-bold bg-black/50 text-white rounded-tl pointer-events-none">
+                    <span className="absolute bottom-0 right-0 p-0.5 text-[0.6rem] font-bold bg-black/50 text-white pointer-events-none">
                         {count}
                     </span>
                 )}

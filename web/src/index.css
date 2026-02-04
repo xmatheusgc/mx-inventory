@@ -6,7 +6,12 @@ body,
   height: 100%;
   width: 100%;
   overflow: hidden;
+  overscroll-behavior: none;
   background: transparent;
+  margin: 0;
+  padding: 0;
+  font-family: 'Inter', sans-serif;
+  user-select: none;
 }
 
 .custom-scrollbar::-webkit-scrollbar {
@@ -26,4 +31,13 @@ body,
 
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.3);
+}
+
+.custom-scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+.custom-scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
