@@ -1,6 +1,6 @@
 import React from 'react';
 import { useDroppable } from '@dnd-kit/core';
-import { ItemView } from './Item';
+import { Item } from './Item';
 import { useInventoryStore, type ItemType } from '../store/inventoryStore';
 
 interface EquipmentSlotProps {
@@ -42,10 +42,10 @@ export const EquipmentSlot: React.FC<EquipmentSlotProps> = ({
                 `}
             >
                 {item ? (
-                    <ItemView
+                    <Item
                         {...item}
-                        style={{ position: 'relative', top: 0, left: 0, transform: 'none' }}
                         isEquipment
+                        containerId={`equip-${slotId}`} // Pass ID for context actions
                     />
                 ) : (
                     <div className="text-zinc-700 text-xs text-center p-2 opacity-50 select-none">

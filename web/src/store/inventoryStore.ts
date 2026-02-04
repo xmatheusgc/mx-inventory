@@ -1,16 +1,19 @@
 import { create } from 'zustand';
+import { ITEM_CONFIGS } from '../config/items';
 
-export type ItemType = 'weapon_primary' | 'weapon_secondary' | 'weapon_pistol' | 'weapon_melee' | 'helmet' | 'armor' | 'vest' | 'backpack' | 'generic';
+export type ItemType = 'weapon_primary' | 'weapon_secondary' | 'weapon_pistol' | 'weapon_melee' | 'helmet' | 'armor' | 'vest' | 'backpack' | 'generic' | 'magazine' | 'attachment_scope' | 'attachment_grip' | 'attachment_muzzle' | 'attachment_skin';
 
-interface Item {
+export interface Item {
     name: string;
     count: number;
     slot: { x: number; y: number };
     image?: string;
     label?: string;
+    description?: string; // New property
     size?: { x: number; y: number };
     weight?: number;
     rotated?: boolean;
+    folded?: boolean; // New property
     type?: ItemType;
 }
 
@@ -48,6 +51,17 @@ interface InventoryState {
     updateContainerWeight: (containerId: string, weight: number) => void;
     equipItem: (slot: string, item: Item, fromContainerId: string) => void;
     unequipItem: (slot: string, toContainerId: string, targetSlot: { x: number, y: number }) => void;
+    toggleItemFold: (containerId: string, itemName: string) => void;
+
+    // UI Actions
+    openWindows: string[];
+    toggleWindow: (containerId: string) => void;
+    closeWindow: (containerId: string) => void;
+
+    // Details Window
+    detailsItem: Item | null;
+    openDetails: (item: Item) => void;
+    closeDetails: () => void;
 }
 
 export const useInventoryStore = create<InventoryState>((set) => ({
@@ -82,18 +96,37 @@ export const useInventoryStore = create<InventoryState>((set) => ({
         head: null,
         armor: null,
         legs: null,
-        backpack: { name: 'mochila_tatica_expansivel_luc', count: 1, slot: { x: 1, y: 1 }, size: { x: 2, y: 2 }, type: 'backpack' },
+        backpack: { name: 'mochila_tatica_expansivel_luc', count: 1, slot: { x: 1, y: 1 }, size: { x: 4, y: 5 }, type: 'backpack' },
         primary: null,
         secondary: null,
         pistol: null,
         melee: null,
-        vest: { name: 'rig_st_tipo_4', count: 1, slot: { x: 1, y: 1 }, size: { x: 2, y: 2 }, type: 'vest' },
+        vest: { name: 'rig_st_tipo_4', count: 1, slot: { x: 1, y: 1 }, size: { x: 3, y: 3 }, type: 'vest' },
     },
+    // UI State
+    openWindows: [],
     setOpen: (isOpen: boolean) => set({ isOpen }),
+    toggleWindow: (containerId: string) => set((state: InventoryState) => {
+        const isOpen = state.openWindows.includes(containerId);
+        return {
+            openWindows: isOpen
+                ? state.openWindows.filter(id => id !== containerId)
+                : [...state.openWindows, containerId]
+        };
+    }),
+    closeWindow: (containerId: string) => set((state: InventoryState) => ({
+        openWindows: state.openWindows.filter(id => id !== containerId)
+    })),
     setContainerData: (id: string, data: ContainerData) =>
         set((state: InventoryState) => ({
             containers: { ...state.containers, [id]: data }
         })),
+
+    // Details
+    detailsItem: null,
+    openDetails: (item: Item) => set({ detailsItem: item }),
+    closeDetails: () => set({ detailsItem: null }),
+
     setEquipment: (data: Record<string, Item | null>) => set({ equipment: data }),
 
     updateContainerWeight: (id: string, weight: number) => set((state: InventoryState) => {
@@ -232,8 +265,15 @@ export const useInventoryStore = create<InventoryState>((set) => ({
         // Remove from source
         const newSourceItems = sourceContainer.items.filter((i: Item) => i.name !== item.name);
 
-        // Add to equipment
-        const newEquipment = { ...state.equipment, [slot]: item };
+        // Add to equipment (Reset Folded - Ensure Expanded)
+        // We need expanded size here.
+        let newItem = { ...item, folded: false };
+        const config = ITEM_CONFIGS[item.name];
+        if (config) {
+            newItem.size = config.expandedSize;
+        }
+
+        const newEquipment = { ...state.equipment, [slot]: newItem };
 
         return {
             containers: {
@@ -264,5 +304,69 @@ export const useInventoryStore = create<InventoryState>((set) => ({
             },
             equipment: newEquipment
         };
+    }),
+
+    toggleItemFold: (containerId: string, itemName: string) => set((state: InventoryState) => {
+        // 1. Check Containers
+        if (state.containers[containerId]) {
+            const container = state.containers[containerId];
+            const itemIndex = container.items.findIndex((i: Item) => i.name === itemName);
+            if (itemIndex === -1) return state;
+
+            const item = container.items[itemIndex];
+            const newFolded = !item.folded;
+
+            let newSize = item.size;
+            const config = ITEM_CONFIGS[item.name];
+            if (config) {
+                newSize = newFolded ? config.foldedSize : config.expandedSize;
+            }
+
+            return {
+                containers: {
+                    ...state.containers,
+                    [containerId]: {
+                        ...container,
+                        items: container.items.map((it, idx) =>
+                            idx === itemIndex ? { ...it, folded: newFolded, size: newSize } : it
+                        )
+                    }
+                }
+            };
+        }
+
+        // 2. Check Equipment (if containerId is 'equipment' or similar)
+        // We will assume if it's not a container, it might be an equipment slot key or we search equipment
+        // Let's iterate equipment to find the item by name if containerId implies equipment
+        // Or simply if we find the item in equipment.
+
+        let equipSlotFound: string | null = null;
+        for (const [slot, item] of Object.entries(state.equipment)) {
+            if (item && item.name === itemName) {
+                equipSlotFound = slot;
+                break;
+            }
+        }
+
+        if (equipSlotFound) {
+            const item = state.equipment[equipSlotFound];
+            if (!item) return state;
+
+            const newFolded = !item.folded;
+            let newSize = item.size;
+            const config = ITEM_CONFIGS[item.name];
+            if (config) {
+                newSize = newFolded ? config.foldedSize : config.expandedSize;
+            }
+
+            return {
+                equipment: {
+                    ...state.equipment,
+                    [equipSlotFound]: { ...item, folded: newFolded, size: newSize }
+                }
+            };
+        }
+
+        return state;
     })
 }));

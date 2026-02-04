@@ -5,6 +5,8 @@ import { Container } from './components/Container';
 import { ItemView } from './components/Item';
 import { EquipmentPanel } from './components/EquipmentPanel';
 import { EquipmentSlot } from './components/EquipmentSlot';
+import { ContainerWindow } from './components/ContainerWindow';
+import { ItemDetailsWindow } from './components/ItemDetailsWindow';
 import { snapCenterToCursor } from './utils/modifiers';
 import { CONTAINER_LAYOUTS } from './config/layouts';
 import { DndContext, type DragEndEvent, type DragMoveEvent, useSensor, useSensors, PointerSensor, rectIntersection, DragOverlay } from '@dnd-kit/core';
@@ -67,10 +69,16 @@ interface HighlightState {
 }
 
 function App() {
-  const { isOpen, setOpen, setContainerData, moveItem, containers, updateContainerWeight, equipment, equipItem, unequipItem } = useInventoryStore();
+  const {
+    isOpen, setOpen, setContainerData, moveItem, containers, updateContainerWeight,
+    equipment, equipItem, unequipItem, rotateItem, toggleItemFold,
+    openWindows, closeWindow, detailsItem, closeDetails
+  } = useInventoryStore();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [activeDragRotation, setActiveDragRotation] = useState<boolean>(false);
   const [dragHighlight, setDragHighlight] = useState<HighlightState | undefined>(undefined);
+
+  const [activeContainerId, setActiveContainerId] = useState<string | null>(null);
 
   // Keep track of the current drag state so we can re-verify on rotation change
   const currentDragState = useRef<{ overId: string; activeRect: any } | null>(null);
@@ -147,18 +155,67 @@ function App() {
         fetchNui('close');
         setOpen(false);
       }
-      if (isOpen && (e.key === 'r' || e.key === 'R') && activeId) {
+      // Keyboard Listeners (Rotate R, Fold F)
+      if (!activeId) return;
+
+      if (e.key.toLowerCase() === 'r') {
         setActiveDragRotation(prev => !prev);
+        // Scoped Rotation
+        if (activeContainerId) {
+          rotateItem(activeContainerId, activeId as string);
+        } else {
+          // Fallback to searching containers if for some reason activeContainerId is missing (shouldn't happen with new logic)
+          const container = Object.values(containers).find((c: any) => c.items.some((i: any) => i.name === activeId));
+          if (container) rotateItem(container.id, activeId as string);
+        }
+      }
+
+      if (e.key.toLowerCase() === 'f') {
+        // Toggle Fold - Scoped
+        if (activeContainerId) {
+          toggleItemFold(activeContainerId, activeId as string);
+        } else {
+          // Fallback Search
+          let itemInfo = Object.values(containers).flatMap((c: any) => c.items.map((i: any) => ({ ...i, containerId: c.id })))
+            .find((i: any) => i.name === activeId);
+
+          if (!itemInfo) {
+            const equipItem = Object.values(equipment).find((i: any) => i?.name === activeId);
+            if (equipItem) {
+              itemInfo = { ...equipItem, containerId: 'equipment' };
+            }
+          }
+
+          if (itemInfo) {
+            toggleItemFold(itemInfo.containerId, activeId as string);
+          }
+        }
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, activeId]);
+  }, [isOpen, activeId, activeContainerId, containers, equipment, rotateItem, toggleItemFold]);
 
   const handleDragStart = (event: any) => {
     setActiveId(event.active.id);
+    if (event.active.data.current?.containerId) {
+      setActiveContainerId(event.active.data.current.containerId);
+    } else {
+      // Fallback or Equipment logic if containerId missing (should cause an issue if missing)
+      // Check if it's equipment by checking store
+      // Usually we pass containerId from Item.
+      setActiveContainerId(null);
+    }
+
+    // Check rotation check
+    const item = event.active.data.current; // Use data directly!
+    if (item && item.rotated !== undefined) {
+      setActiveDragRotation(item.rotated);
+    }
   };
+
+
 
   // Helper to parse complex Drop IDs (e.g. "vest-1::pocket::0")
   const parseContainerId = useCallback((id: string) => {
@@ -218,6 +275,15 @@ function App() {
       x: relativeSlot.x + regionOffset.x,
       y: relativeSlot.y + regionOffset.y
     };
+
+    // 0. Recursion / Self-Storage Check
+    // Prevent putting a bag inside itself or similar bags if logic implies they provide the storage
+    if (baseId.includes(item.name) ||
+      (item.type && ['backpack', 'vest', 'bag'].includes(item.type) && baseId.includes(item.type)) ||
+      (item.name && baseId.includes(item.name))
+    ) {
+      return false;
+    }
 
     const originalSize = item.size || { x: 1, y: 1 };
     const size = rotation ? { x: originalSize.y, y: originalSize.x } : originalSize;
@@ -360,6 +426,7 @@ function App() {
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     setActiveId(null);
+    setActiveContainerId(null);
     setDragHighlight(undefined); // Clear highlight
     currentDragState.current = null;
     const finalRotation = activeDragRotation;
@@ -487,15 +554,29 @@ function App() {
   };
 
   // Helper to find active item for Overlay
-  let activeItem: any = activeId ? Object.values(containers).flatMap((c: any) => c.items).find((i: any) => i.name === activeId) : null;
-  if (!activeItem && activeId) {
-    activeItem = Object.values(equipment).find(i => i?.name === activeId);
-  }
-
   const renderDragOverlay = () => {
+    if (!activeId) return null;
+
+    let activeItem: any = null;
+    if (activeContainerId) {
+      if (containers[activeContainerId]) {
+        activeItem = containers[activeContainerId].items.find((i: any) => i.name === activeId);
+      } else {
+        activeItem = Object.values(equipment).find(i => i?.name === activeId);
+      }
+    }
+
+    if (!activeItem) {
+      activeItem = Object.values(containers).flatMap((c: any) => c.items).find((i: any) => i.name === activeId);
+      if (!activeItem) {
+        activeItem = Object.values(equipment).find(i => i?.name === activeId);
+      }
+    }
+
     if (!activeItem) return null;
 
-    const currentSize = activeDragRotation ? { x: activeItem.size?.y || 1, y: activeItem.size?.x || 1 } : (activeItem.size || { x: 1, y: 1 });
+    const originalSize = activeItem.size || { x: 1, y: 1 };
+    const currentSize = activeDragRotation ? { x: originalSize.y, y: originalSize.x } : originalSize;
 
     const style = {
       width: currentSize.x * SLOT_SIZE + (currentSize.x - 1) * GAP,
@@ -503,8 +584,29 @@ function App() {
     };
 
     return (
-      <ItemView {...activeItem} rotated={activeDragRotation} isDragging isOverlay style={style} />
+      <div style={style} className="relative z-[100] cursor-grabbing">
+        <ItemView
+          {...activeItem}
+          slot={{ x: 1, y: 1 }}
+          size={currentSize}
+          isDragging
+          isOverlay
+          style={{ width: '100%', height: '100%' }}
+        />
+        {/* Visual Hint */}
+        <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 whitespace-nowrap bg-black/70 text-white text-[10px] px-2 py-1 rounded border border-white/20 flex gap-2">
+          <span><span className="font-bold text-orange-400">[F]</span> Expand/Fold</span>
+          <span><span className="font-bold text-orange-400">[R]</span> Rotate</span>
+        </div>
+      </div>
     );
+  };
+
+  const handleDragCancel = () => {
+    setActiveId(null);
+    setActiveContainerId(null);
+    setDragHighlight(undefined);
+    currentDragState.current = null;
   };
 
   if (!isOpen) return null;
@@ -516,6 +618,7 @@ function App() {
       onDragStart={handleDragStart}
       onDragMove={handleDragMove}
       onDragEnd={handleDragEnd}
+      onDragCancel={handleDragCancel}
     >
       <div className="flex items-center justify-center min-h-screen w-full h-full bg-black/40 text-white font-sans selection:bg-orange-500/30 p-10">
         {/* 3-Column Layout - Floating/Immersive */}
@@ -571,7 +674,7 @@ function App() {
                                   globalIndex += pIdx;
 
                                   return (
-                                    <div key={globalIndex} className={`flex flex-col border border-white/20 ${pocket.className || ''}`}>
+                                    <div key={globalIndex} className={`flex flex-col ${pocket.className || ''}`}>
                                       <Container
                                         containerId={c.id}
                                         droppableId={`${c.id}::pocket::${globalIndex}`}
@@ -632,7 +735,7 @@ function App() {
                                   globalIndex += pIdx;
 
                                   return (
-                                    <div key={globalIndex} className={`flex flex-col border border-white/20 ${pocket.className || ''}`}>
+                                    <div key={globalIndex} className={`flex flex-col ${pocket.className || ''}`}>
                                       <Container
                                         containerId={c.id}
                                         droppableId={`${c.id}::pocket::${globalIndex}`}
@@ -696,9 +799,26 @@ function App() {
               <div className="flex items-center justify-center flex-1 opacity-20 text-zinc-500 text-sm italic">
                 No active loot nearby
               </div>
-            )}
+            ) /* Removed extra closing brace here */}
           </div>
         </div>
+        {/* Floating Container Windows */}
+        {openWindows.map(id => (
+          <ContainerWindow
+            key={id}
+            containerId={id}
+            onClose={() => closeWindow(id)}
+          />
+        ))}
+
+        {/* Item Details Window */}
+        {detailsItem && (
+          <ItemDetailsWindow
+            item={detailsItem}
+            onClose={closeDetails}
+          />
+        )}
+
       </div>
       <DragOverlay modifiers={[snapCenterToCursor]}>
         {activeId ? renderDragOverlay() : null}

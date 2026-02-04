@@ -120,7 +120,7 @@ export const Container: React.FC<ContainerProps> = ({ containerId, droppableId, 
         : items;
 
     return (
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-2 border border-white/20">
             <div
                 ref={setNodeRef}
                 className="relative bg-black/40 w-fit h-fit overflow-hidden"
@@ -162,6 +162,7 @@ export const Container: React.FC<ContainerProps> = ({ containerId, droppableId, 
                                 <Item
                                     key={`${item.name}-${index}`}
                                     {...visualItem}
+                                    containerId={containerId}
                                 />
                             )
                         })}

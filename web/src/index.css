@@ -1,5 +1,16 @@
 @import "tailwindcss";
 
+:root {
+  --sb-track-color: transparent;
+  /* Zinc-950/Black blend - Darker to blend with bg */
+  --sb-thumb-color: #52525b;
+  /* Zinc-600 - Visible but not too bright */
+  --sb-thumb-hover-color: #71717a;
+  /* Zinc-500 - Lighter on hover */
+  --sb-size: 5px;
+  /* Sleek, thin */
+}
+
 html,
 body,
 #root {
@@ -14,25 +25,34 @@ body,
   user-select: none;
 }
 
-.custom-scrollbar::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+/* Global Scrollbar */
+*::-webkit-scrollbar {
+  width: var(--sb-size);
+  height: var(--sb-size);
 }
 
-.custom-scrollbar::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 4px;
+*::-webkit-scrollbar-track {
+  background: var(--sb-track-color);
+  border-radius: 2px;
 }
 
-.custom-scrollbar::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.2);
-  border-radius: 4px;
+*::-webkit-scrollbar-thumb {
+  background: var(--sb-thumb-color);
+  border-radius: 2px;
 }
 
-.custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.3);
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--sb-thumb-hover-color);
 }
 
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-color: var(--sb-thumb-color) var(--sb-track-color);
+    scrollbar-width: thin;
+  }
+}
+
+/* Utilities */
 .custom-scrollbar-hide::-webkit-scrollbar {
   display: none;
 }
