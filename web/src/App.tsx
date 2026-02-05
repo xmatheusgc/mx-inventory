@@ -617,7 +617,7 @@ function App() {
         {/* 3-Column Layout - Floating/Immersive */}
         <div className="flex flex-1 gap-8 max-w-[90vw] h-[85vh] mx-auto">
           {/* LEFT: Equipment */}
-          <div className="flex-1 flex flex-col gap-4 overflow-hidden min-w-[300px] pt-12 border bg-black/60 border-white/10">
+          <div className="flex-1 flex flex-col gap-4 overflow-hidden min-w-[300px] pt-12">
             <EquipmentPanel />
           </div>
 

@@ -5,8 +5,6 @@ import { EquipmentSlot } from './EquipmentSlot';
 export const EquipmentPanel: React.FC = () => {
     return (
         <div className="flex flex-col gap-4 p-4 rounded-lg min-w-[520px]">
-            <h2 className="text-zinc-400 text-sm font-bold uppercase tracking-wider mb-2 border-b border-zinc-700 pb-2">Equipment</h2>
-
             {/* Top Section: Gear (Squares) */}
             <div className="flex gap-4">
                 <div className="flex flex-col gap-4 items-start">
