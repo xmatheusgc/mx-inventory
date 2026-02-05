@@ -59,9 +59,9 @@ interface InventoryState {
     closeWindow: (containerId: string) => void;
 
     // Details Window
-    detailsItem: Item | null;
+    detailsWindows: Item[];
     openDetails: (item: Item) => void;
-    closeDetails: () => void;
+    closeDetails: (item: Item) => void;
 }
 
 export const useInventoryStore = create<InventoryState>((set) => ({
@@ -123,9 +123,19 @@ export const useInventoryStore = create<InventoryState>((set) => ({
         })),
 
     // Details
-    detailsItem: null,
-    openDetails: (item: Item) => set({ detailsItem: item }),
-    closeDetails: () => set({ detailsItem: null }),
+    detailsWindows: [],
+    openDetails: (item: Item) => set((state) => {
+        // Prevent duplicates based on name? Or allow same item twice?
+        // Usually unique by reference or name. Let's assume name unique for window purposes or just allow multiple.
+        // If we want to prevent multiple windows for the EXACT SAME item instance, we need unique ID.
+        // For now, let's just append. User can close them.
+        // Actually, preventing exact duplicates is better UX.
+        if (state.detailsWindows.some(i => i.name === item.name)) return state;
+        return { detailsWindows: [...state.detailsWindows, item] };
+    }),
+    closeDetails: (item: Item) => set((state) => ({
+        detailsWindows: state.detailsWindows.filter(i => i.name !== item.name)
+    })),
 
     setEquipment: (data: Record<string, Item | null>) => set({ equipment: data }),
 

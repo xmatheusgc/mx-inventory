@@ -86,7 +86,7 @@ export const ItemView: React.FC<ItemProps & {
         if (isOverlay || isDragging) return;
 
         // Container Check (Backpack/Vest) -> Open Window
-        if (type === 'vest' || type === 'backpack' || type === 'bag') {
+        if ((type === 'vest' || type === 'backpack' || type === 'bag') && !props.isEquipment) {
             toggleWindow(name);
         } else {
             // Other Items -> Open Details

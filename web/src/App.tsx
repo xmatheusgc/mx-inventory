@@ -71,8 +71,8 @@ interface HighlightState {
 function App() {
   const {
     isOpen, setOpen, setContainerData, moveItem, containers, updateContainerWeight,
-    equipment, equipItem, unequipItem, rotateItem, toggleItemFold,
-    openWindows, closeWindow, detailsItem, closeDetails
+    equipment, equipItem, unequipItem, toggleItemFold,
+    openWindows, closeWindow, detailsWindows, closeDetails
   } = useInventoryStore();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [activeDragRotation, setActiveDragRotation] = useState<boolean>(false);
@@ -160,14 +160,7 @@ function App() {
 
       if (e.key.toLowerCase() === 'r') {
         setActiveDragRotation(prev => !prev);
-        // Scoped Rotation
-        if (activeContainerId) {
-          rotateItem(activeContainerId, activeId as string);
-        } else {
-          // Fallback to searching containers if for some reason activeContainerId is missing (shouldn't happen with new logic)
-          const container = Object.values(containers).find((c: any) => c.items.some((i: any) => i.name === activeId));
-          if (container) rotateItem(container.id, activeId as string);
-        }
+        // Only update visual state. Store is updated on Drop.
       }
 
       if (e.key.toLowerCase() === 'f') {
@@ -195,7 +188,7 @@ function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, activeId, activeContainerId, containers, equipment, rotateItem, toggleItemFold]);
+  }, [isOpen, activeId, activeContainerId, containers, equipment, toggleItemFold]);
 
   const handleDragStart = (event: any) => {
     setActiveId(event.active.id);
@@ -812,12 +805,14 @@ function App() {
         ))}
 
         {/* Item Details Window */}
-        {detailsItem && (
+        {/* Item Details Window */}
+        {detailsWindows.map((item) => (
           <ItemDetailsWindow
-            item={detailsItem}
-            onClose={closeDetails}
+            key={item.name}
+            item={item}
+            onClose={() => closeDetails(item)}
           />
-        )}
+        ))}
 
       </div>
       <DragOverlay modifiers={[snapCenterToCursor]}>
