@@ -1,12 +1,4 @@
-local ItemDefs = {
-    water = { label = 'Bottle of Water', size = { x = 1, y = 2 }, image = 'items/water.png', weight = 0.5 },
-    bread = { label = 'Bread', size = { x = 1, y = 1 }, image = 'items/bread.png', weight = 0.2 },
-    pistol = { label = 'Pistol', size = { x = 2, y = 2 }, image = 'items/pistol.png', weight = 1.5 },
-    medkit = { label = 'Medkit', size = { x = 2, y = 2 }, image = 'items/medkit.png', weight = 1.0 },
-    knife = { label = 'Combat Knife', size = { x = 1, y = 2 }, image = 'items/knife.png', weight = 0.8 },
-    rifle = { label = 'Assault Rifle', size = { x = 3, y = 6 }, image = 'items/rifle.png', weight = 4.5 },
-    bandage = { label = 'Bandage', size = { x = 1, y = 1 }, image = 'items/bandage.png', weight = 0.1 }
-}
+local ItemDefs = Config.Items
 
 -- Calculate total weight of a list of items
 local function GetContainerWeight(items)

@@ -602,6 +602,9 @@ function App() {
     currentDragState.current = null;
   };
 
+  // Check if any Loot/Stash is open
+  const isStashOpen = Object.values(containers).some(c => c.id.startsWith('drop-') || c.id.startsWith('stash-'));
+
   if (!isOpen) return null;
 
   return (
@@ -613,16 +616,20 @@ function App() {
       onDragEnd={handleDragEnd}
       onDragCancel={handleDragCancel}
     >
-      <div className="flex items-center justify-center min-h-screen w-full h-full bg-black/40 text-white font-sans selection:bg-orange-500/30 p-10">
+      <div className="flex items-center justify-center min-h-screen w-full h-full text-white font-sans selection:bg-orange-500/30 p-10 transition-all duration-500 ease-in-out">
         {/* 3-Column Layout - Floating/Immersive */}
-        <div className="flex flex-1 gap-8 max-w-[90vw] h-[85vh] mx-auto">
+        {/* If Stash Closed: Center the content (max-w fit, margin auto) */}
+        {/* If Stash Open: Expand to full width or shift left */}
+        <div className={`flex gap-8 h-[85vh] mx-auto transition-all duration-500 ease-in-out ${isStashOpen ? 'max-w-[90vw] translate-x-0' : 'max-w-[1200px] translate-x-[0px]'}`}>
           {/* LEFT: Equipment */}
-          <div className="flex-1 flex flex-col gap-4 overflow-hidden min-w-[300px] pt-12">
+          {/* If No Stash: We behave normally. */}
+
+          <div className="flex flex-col gap-4 overflow-hidden min-w-[500px] pt-12">
             <EquipmentPanel />
           </div>
 
           {/* CENTER: Player Inventory (Grids) */}
-          <div className="flex-1 flex flex-col gap-4 overflow-y-auto overflow-x-hidden min-w-[500px] pt-12 border bg-black/60 border-white/10">
+          <div className="flex flex-col gap-4 overflow-y-auto overflow-x-hidden pt-12 border bg-black/60 border-white/10 min-w-[500px] shrink-0">
 
             {/* 1. Pockets (Always Top) */}
             {containers['player-inv'] &&
@@ -775,25 +782,27 @@ function App() {
           </div>
 
           {/* RIGHT: Loot / Stash / Storage */}
-          <div className="flex-1 flex flex-col gap-4 overflow-y-auto overflow-x-hidden min-w-[300px] pt-12 border bg-black/60 border-white/10">
-            {Object.values(containers)
-              .filter((c: any) => c.id.startsWith('drop-') || c.id.startsWith('stash-'))
-              .map((c: any) => (
-                <div key={c.id} className="flex flex-col gap-1 p-4 bg-black/40 rounded-sm border border-white/5">
-                  <span className="text-zinc-500 text-xs font-bold uppercase tracking-wider">{c.label}</span>
-                  <Container
-                    containerId={c.id}
-                    highlight={dragHighlight?.containerId === c.id ? dragHighlight : undefined}
-                  />
+          {isStashOpen && (
+            <div className="flex flex-col gap-4 overflow-y-auto overflow-x-hidden min-w-[300px] pt-12 border bg-black/60 border-white/10">
+              {Object.values(containers)
+                .filter((c: any) => c.id.startsWith('drop-') || c.id.startsWith('stash-'))
+                .map((c: any) => (
+                  <div key={c.id} className="flex flex-col gap-1 p-4 bg-black/40 rounded-sm border border-white/5">
+                    <span className="text-zinc-500 text-xs font-bold uppercase tracking-wider">{c.label}</span>
+                    <Container
+                      containerId={c.id}
+                      highlight={dragHighlight?.containerId === c.id ? dragHighlight : undefined}
+                    />
+                  </div>
+                ))
+              }
+              {Object.values(containers).filter((c: any) => c.id.startsWith('drop-') || c.id.startsWith('stash-')).length === 0 && (
+                <div className="flex items-center justify-center flex-1 opacity-20 text-zinc-500 text-sm italic">
+                  No active loot nearby
                 </div>
-              ))
-            }
-            {Object.values(containers).filter((c: any) => c.id.startsWith('drop-') || c.id.startsWith('stash-')).length === 0 && (
-              <div className="flex items-center justify-center flex-1 opacity-20 text-zinc-500 text-sm italic">
-                No active loot nearby
-              </div>
-            ) /* Removed extra closing brace here */}
-          </div>
+              )}
+            </div>
+          )}
         </div>
         {/* Floating Container Windows */}
         {openWindows.map(id => (

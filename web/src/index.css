@@ -1,4 +1,22 @@
 @import "tailwindcss";
+@source "./src";
+
+@theme {
+  --font-sans: "RefrigeratorDeluxe", "Inter", sans-serif;
+
+  /* Force HEX for FiveM/CEF Compatibility (OKLCH not supported) */
+  --color-green-500: #22c55e;
+  --color-blue-500: #3b82f6;
+  --color-yellow-500: #eab308;
+  --color-gray-300: #d1d5db;
+  --color-zinc-400: #a1a1aa;
+  --color-zinc-500: #71717a;
+  --color-zinc-600: #52525b;
+  --color-zinc-700: #3f3f46;
+  --color-zinc-800: #27272a;
+  --color-zinc-900: #18181b;
+  --color-orange-500: #f97316;
+}
 
 :root {
   --sb-track-color: transparent;
@@ -11,6 +29,11 @@
   /* Sleek, thin */
 }
 
+@font-face {
+  font-family: "RefrigeratorDeluxe";
+  src: url('./assets/fonts/RefrigeratorDeluxe-regular.otf') format('opentype');
+}
+
 html,
 body,
 #root {
@@ -21,7 +44,8 @@ body,
   background: transparent;
   margin: 0;
   padding: 0;
-  font-family: 'Inter', sans-serif;
+  font-family: RefrigeratorDeluxe, system-ui, sans-serif;
+  font-size: 16px;
   user-select: none;
 }
 

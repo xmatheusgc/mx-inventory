@@ -30,12 +30,12 @@ export const EquipmentSlot: React.FC<EquipmentSlotProps> = ({
     });
 
     return (
-        <div className="flex flex-col gap-1">
-            {label && <span className="text-zinc-500 text-[10px] uppercase font-bold tracking-wider">{label}</span>}
+        <div className="flex flex-col">
+            {label && <span className="text-zinc-500 text-xs uppercase font-bold tracking-wider pl-2 border border-zinc-700">{label}</span>}
             <div
                 ref={setNodeRef}
                 className={`
-                    relative bg-zinc-800/20 border border-zinc-700/50 overflow-hidden flex items-center justify-center shrink-0
+                    relative bg-zinc-800/40 border border-zinc-700/30 overflow-hidden flex items-center justify-center shrink-0
                     ${isOver ? 'border-orange-500/80 bg-orange-500/10' : ''}
                     transition-colors duration-200
                     ${className}
@@ -48,7 +48,7 @@ export const EquipmentSlot: React.FC<EquipmentSlotProps> = ({
                         containerId={`equip-${slotId}`} // Pass ID for context actions
                     />
                 ) : (
-                    <div className="text-zinc-700 text-xs text-center p-2 opacity-50 select-none">
+                    <div className="text-gray-300 text-xs text-center p-2 opacity-50 select-none">
                         EMPTY
                     </div>
                 )}
