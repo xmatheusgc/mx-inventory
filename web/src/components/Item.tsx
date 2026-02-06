@@ -57,6 +57,8 @@ export const ItemView: React.FC<ItemProps & {
         if (!isDragging && !showContextMenu && !isOverlay && !modalOpen) {
             setShowTooltip(true);
             setTooltipPos({ x: e.clientX, y: e.clientY });
+            // Set global hovered item for shortcuts
+            useInventoryStore.getState().setHoveredItem({ name: props.name, containerId: props.containerId || 'unknown' });
         }
     };
 
@@ -68,6 +70,11 @@ export const ItemView: React.FC<ItemProps & {
 
     const handleMouseLeave = () => {
         setShowTooltip(false);
+        // Clear global hovered item
+        const currentHover = useInventoryStore.getState().hoveredItem;
+        if (currentHover?.name === props.name) {
+            useInventoryStore.getState().setHoveredItem(null);
+        }
     };
 
     const handleContextMenu = (e: React.MouseEvent) => {

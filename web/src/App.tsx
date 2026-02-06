@@ -151,7 +151,11 @@ function App() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (isOpen && (e.key === 'Escape')) {
+      if (['5', '6', '7', '8'].includes(e.key)) {
+        useInventoryStore.getState().setShortcut(e.key);
+      }
+
+      if (e.key === 'Escape') {
         fetchNui('close');
         setOpen(false);
       }
@@ -183,6 +187,12 @@ function App() {
             toggleItemFold(itemInfo.containerId, activeId as string);
           }
         }
+      }
+
+      // Check Shortcuts 5-8
+      if (['5', '6', '7', '8'].includes(e.key)) {
+        console.log('[DEBUG] Key pressed:', e.key);
+        useInventoryStore.getState().setShortcut(e.key);
       }
     };
 

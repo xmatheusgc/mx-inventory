@@ -1,9 +1,12 @@
 import React from 'react';
 import { EquipmentSlot } from './EquipmentSlot';
 import { Droplets, HeartPulse, Weight, Zap } from 'lucide-react';
+import { useInventoryStore } from '../store/inventoryStore';
 
 
 export const EquipmentPanel: React.FC = () => {
+    const { shortcuts, containers, equipment } = useInventoryStore();
+
     return (
         <div className="flex flex-col gap-2 p-4 rounded-lg min-w-[520px]">
             {/* Main Gear Section (Split for Ped) - Reduced Height */}
@@ -57,20 +60,43 @@ export const EquipmentPanel: React.FC = () => {
                 </div>
             </div>
 
-            {/* Hotbar Slots (5-8) - Bottom Row */}
+            {/* Virtual Hotbar Slots (5-8) - Bottom Row */}
             <div className="flex justify-start w-fit bg-black/60 p-1 gap-1">
-                {[5, 6, 7, 8].map(num => (
-                    <div key={num} className="bg-black/40">
-                        <EquipmentSlot
-                            slotId={String(num)}
-                            label=""
-                            className="w-14 h-14"
-                            acceptedTypes={[]} // Accept all (or handled by logic)
-                        >
-                            <span className="absolute top-1 left-1 text-xs text-text-subtle font-bold z-10 pointer-events-none">{num}</span>
-                        </EquipmentSlot>
-                    </div>
-                ))}
+                {['5', '6', '7', '8'].map(key => {
+                    const itemName = shortcuts[key];
+                    let item: any = null;
+
+                    if (itemName) {
+                        // Find item in Pockets or Vest
+                        const playerContainer = containers['player-inv'];
+                        const vestContainer = Object.values(containers).find(c => c.type === 'vest' && equipment?.vest?.name === c.id);
+
+                        if (playerContainer) {
+                            item = playerContainer.items.find((i: any) => i.name === itemName);
+                        }
+                        if (!item && vestContainer) {
+                            item = vestContainer.items.find((i: any) => i.name === itemName);
+                        }
+                    }
+
+                    return (
+                        <div key={key} className="relative w-14 h-14 bg-black/40 border border-white/10 flex items-center justify-center">
+                            <span className="absolute top-1 left-1 text-xs text-text-subtle font-bold z-10 pointer-events-none">{key}</span>
+                            {item ? (
+                                <div className="w-full h-full p-1 opacity-80 hover:opacity-100 transition-opacity">
+                                    {item.image ? (
+                                        <img src={item.image} alt={item.label} className="w-full h-full object-contain" />
+                                    ) : (
+                                        <span className="text-[10px] text-center w-full break-words">{item.label}</span>
+                                    )}
+                                    <span className="absolute bottom-0 right-0 p-0.5 text-[0.6rem] font-bold text-white bg-black/50">{item.count}</span>
+                                </div>
+                            ) : (
+                                itemName && !item && <span className="text-red-500 text-xs">Missing</span> // Item assigned but not found
+                            )}
+                        </div>
+                    );
+                })}
             </div>
             <div className="flex justify-start w-full bg-black/60 p-1">
                 <div className="flex justify-between w-full px-12 bg-black/40 p-6">
