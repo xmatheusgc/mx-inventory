@@ -9,13 +9,15 @@ interface EquipmentSlotProps {
     acceptedTypes: ItemType[];
     placeholderImage?: string; // Optional bg image
     className?: string;
+    children?: React.ReactNode;
 }
 
 export const EquipmentSlot: React.FC<EquipmentSlotProps> = ({
     slotId,
     label,
     acceptedTypes,
-    className
+    className,
+    children
 }) => {
     const { equipment } = useInventoryStore();
     const item = equipment[slotId];
@@ -31,12 +33,12 @@ export const EquipmentSlot: React.FC<EquipmentSlotProps> = ({
 
     return (
         <div className="flex flex-col">
-            {label && <span className="text-zinc-500 text-xs uppercase font-bold tracking-wider pl-2 border border-zinc-700">{label}</span>}
+            {label && <span className="text-text-muted text-xs uppercase font-bold tracking-wider pl-2 border border-border-dark">{label}</span>}
             <div
                 ref={setNodeRef}
                 className={`
-                    relative bg-zinc-800/40 border border-zinc-700/30 overflow-hidden flex items-center justify-center shrink-0
-                    ${isOver ? 'border-orange-500/80 bg-orange-500/10' : ''}
+                    relative bg-surface-light/40 border border-border-dark/30 overflow-hidden flex items-center justify-center shrink-0
+                    ${isOver ? 'border-primary/80 bg-primary/10' : ''}
                     transition-colors duration-200
                     ${className}
                 `}
@@ -48,10 +50,11 @@ export const EquipmentSlot: React.FC<EquipmentSlotProps> = ({
                         containerId={`equip-${slotId}`} // Pass ID for context actions
                     />
                 ) : (
-                    <div className="text-gray-300 text-xs text-center p-2 opacity-50 select-none">
+                    <div className="text-text-subtle text-xs text-center p-2 opacity-50 select-none">
                         EMPTY
                     </div>
                 )}
+                {children}
             </div>
         </div>
     );

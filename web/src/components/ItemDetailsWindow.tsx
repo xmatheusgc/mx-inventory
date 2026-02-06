@@ -51,25 +51,25 @@ export const ItemDetailsWindow: React.FC<ItemDetailsWindowProps> = ({ item, onCl
 
     return createPortal(
         <div
-            className="fixed flex flex-col bg-zinc-900/95 border border-zinc-700 shadow-2xl rounded-sm overflow-hidden min-w-[350px] max-w-[400px] z-[60]"
+            className="fixed flex flex-col bg-surface-dark/95 border border-border-dark shadow-2xl rounded-sm overflow-hidden min-w-[350px] max-w-[400px] z-[60]"
             style={{ left: position.x, top: position.y }}
         >
             {/* Header / Drag Handle */}
             <div
-                className="flex items-center justify-between bg-zinc-800 p-2 cursor-move border-b border-zinc-700 select-none"
+                className="flex items-center justify-between bg-surface-light p-2 cursor-move border-b border-border-dark select-none"
                 onMouseDown={handleMouseDown}
             >
                 <div className="flex items-center gap-2">
-                    <span className="text-orange-500 font-bold uppercase tracking-wider text-sm">
+                    <span className="text-primary font-bold uppercase tracking-wider text-sm">
                         INFO
                     </span>
-                    <span className="text-zinc-400 text-xs">
+                    <span className="text-text-subtle text-xs">
                         {item.label || item.name}
                     </span>
                 </div>
                 <button
                     onClick={(e) => { e.stopPropagation(); onClose(); }}
-                    className="text-zinc-500 hover:text-white transition-colors"
+                    className="text-text-muted hover:text-white transition-colors"
                 >
                     ✕
                 </button>
@@ -88,13 +88,13 @@ export const ItemDetailsWindow: React.FC<ItemDetailsWindowProps> = ({ item, onCl
                     </div>
                     <div className="flex flex-col gap-1 flex-1">
                         <h3 className="text-lg font-bold text-white leading-none">{item.label || item.name}</h3>
-                        <span className="text-xs text-zinc-500 uppercase tracking-widest">{item.type || 'Generic Item'}</span>
+                        <span className="text-xs text-text-muted uppercase tracking-widest">{item.type || 'Generic Item'}</span>
                         <div className="h-px bg-white/10 my-1" />
                         <p className="text-xs text-zinc-400 leading-relaxed">
                             {item.description || "No description available for this item. double-click usage allows specific actions."}
                         </p>
                         <div className="flex gap-2 mt-auto">
-                            <span className="text-[10px] bg-zinc-800 px-1.5 py-0.5 rounded text-zinc-500">
+                            <span className="text-[10px] bg-surface-light px-1.5 py-0.5 rounded text-text-muted">
                                 Weight: {item.weight || 0.0}kg
                             </span>
                         </div>
@@ -104,7 +104,7 @@ export const ItemDetailsWindow: React.FC<ItemDetailsWindowProps> = ({ item, onCl
                 {/* Weapon Attachments Section */}
                 {isWeapon && (
                     <div className="flex flex-col gap-2 pt-2 border-t border-white/5">
-                        <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Attachments</span>
+                        <span className="text-xs font-bold text-text-muted uppercase tracking-wider">Attachments</span>
                         <div className="flex gap-2 justify-between">
                             <EquipmentSlot slotId="magazine" label="MAG" className="w-12 h-12 bg-black/40 border-white/5" acceptedTypes={['magazine']} />
                             <EquipmentSlot slotId="scope" label="SCP" className="w-12 h-12 bg-black/40 border-white/5" acceptedTypes={['attachment_scope']} />

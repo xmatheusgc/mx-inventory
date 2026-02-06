@@ -76,10 +76,10 @@ export const Container: React.FC<ContainerProps> = ({ containerId, droppableId, 
                     <div
                         key={`${x}-${y}`}
                         className={twMerge(
-                            "relative bg-zinc-800/40 border border-zinc-700/30 transition-colors",
+                            "relative bg-surface-light/40 border border-border-dark/30 transition-colors",
                             highlighted && (highlight?.isValid
-                                ? "bg-green-500/20 border-green-500/50"
-                                : "bg-red-500/20 border-red-500/50")
+                                ? "bg-success/20 border-success/50"
+                                : "bg-error/20 border-error/50")
                         )}
                         style={{
                             width: SLOT_SIZE,
@@ -170,7 +170,7 @@ export const Container: React.FC<ContainerProps> = ({ containerId, droppableId, 
                 </div>
 
                 {/* Border Overlay */}
-                <div className="absolute top-0 left-0 w-full h-full pointer-events-none border border-zinc-700/30" />
+                <div className="absolute top-0 left-0 w-full h-full pointer-events-none border border-border-dark/30" />
             </div>
         </div>
     );

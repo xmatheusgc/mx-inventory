@@ -36,7 +36,7 @@ export const QuantityModal: React.FC<QuantityModalProps> = ({ isOpen, onClose, o
 
     return (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm">
-            <div className="bg-zinc-900 border border-zinc-700 p-4 rounded-md shadow-2xl w-64">
+            <div className="bg-surface-dark border border-border-dark p-4 rounded-md shadow-2xl w-64">
                 <h3 className="text-zinc-200 text-sm font-bold mb-4 uppercase tracking-wider">{title}</h3>
                 <form onSubmit={handleSubmit} className="flex flex-col gap-4">
                     <div className="relative">
@@ -47,22 +47,22 @@ export const QuantityModal: React.FC<QuantityModalProps> = ({ isOpen, onClose, o
                             max={maxQuantity}
                             value={value}
                             onChange={(e) => setValue(e.target.value)}
-                            className="w-full bg-zinc-800 text-white border border-zinc-600 rounded px-2 py-1 text-center outline-none focus:border-orange-500"
+                            className="w-full bg-surface-light text-white border border-border-light rounded px-2 py-1 text-center outline-none focus:border-primary"
                         />
-                        <span className="absolute right-2 top-1.5 text-xs text-zinc-500">/ {maxQuantity}</span>
+                        <span className="absolute right-2 top-1.5 text-xs text-text-muted">/ {maxQuantity}</span>
                     </div>
 
                     <div className="flex gap-2 justify-end">
                         <button
                             type="button"
                             onClick={onClose}
-                            className="px-3 py-1 text-xs text-zinc-400 hover:text-white transition-colors"
+                            className="px-3 py-1 text-xs text-text-subtle hover:text-white transition-colors"
                         >
                             Cancelar
                         </button>
                         <button
                             type="submit"
-                            className="px-3 py-1 text-xs bg-orange-600 hover:bg-orange-500 text-white rounded font-bold transition-colors"
+                            className="px-3 py-1 text-xs bg-orange-600 hover:bg-primary text-white rounded font-bold transition-colors"
                         >
                             Confirmar
                         </button>

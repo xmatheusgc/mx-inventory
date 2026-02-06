@@ -14,8 +14,8 @@ export const EquipmentPanel: React.FC = () => {
                         <EquipmentSlot slotId="head" label="Head" className="w-32 h-32" acceptedTypes={['helmet']} />
                     </div>
                     {/* Face */}
-                    <div className="w-32 h-32 relative bg-black/40 border border-zinc-700/30 overflow-hidden flex items-center justify-center shrink-0">
-                        <span className="text-gray-300 text-xs uppercase">Face</span>
+                    <div className='bg-black/40'>
+                        <EquipmentSlot slotId="face" label="Face" className="w-32 h-32" acceptedTypes={['mask']} />
                     </div>
                 </div>
 
@@ -28,8 +28,8 @@ export const EquipmentPanel: React.FC = () => {
                         <EquipmentSlot slotId="armor" label="Armor" className="w-32 h-32" acceptedTypes={['armor']} />
                     </div>
                     {/* Earpiece */}
-                    <div className="w-32 h-32 relative bg-black/40 border border-zinc-700/30 overflow-hidden flex items-center justify-center shrink-0">
-                        <span className="text-gray-300 text-xs uppercase">Earpiece</span>
+                    <div className='bg-black/40'>
+                        <EquipmentSlot slotId="earpiece" label="Earpiece" className="w-32 h-32" acceptedTypes={['earpiece']} />
                     </div>
                 </div>
             </div>
@@ -60,17 +60,24 @@ export const EquipmentPanel: React.FC = () => {
             {/* Hotbar Slots (5-8) - Bottom Row */}
             <div className="flex justify-start w-fit bg-black/60 p-1 gap-1">
                 {[5, 6, 7, 8].map(num => (
-                    <div key={num} className="relative bg-black/40 border border-zinc-700/30 overflow-hidden flex items-center justify-center shrink-0 w-14 h-14">
-                        <span className="absolute top-1 left-1 text-xs text-gray-300 font-bold">{num}</span>
+                    <div key={num} className="bg-black/40">
+                        <EquipmentSlot
+                            slotId={String(num)}
+                            label=""
+                            className="w-14 h-14"
+                            acceptedTypes={[]} // Accept all (or handled by logic)
+                        >
+                            <span className="absolute top-1 left-1 text-xs text-text-subtle font-bold z-10 pointer-events-none">{num}</span>
+                        </EquipmentSlot>
                     </div>
                 ))}
             </div>
             <div className="flex justify-start w-full bg-black/60 p-1">
                 <div className="flex justify-between w-full px-12 bg-black/40 p-6">
-                    <span className="flex items-center gap-1 text-green-500 "><HeartPulse /> 0/0</span>
+                    <span className="flex items-center gap-1 text-success "><HeartPulse /> 0/0</span>
                     <span className="flex items-center gap-1 text-yellow-500"><Zap /> 0/0</span>
                     <span className="flex items-center gap-1 text-blue-500"><Droplets /> 0/0</span>
-                    <span className="flex items-center gap-1 text-gray-300"><Weight /> 0,0Kg</span>
+                    <span className="flex items-center gap-1 text-text-subtle"><Weight /> 0,0Kg</span>
                 </div>
             </div>
         </div>

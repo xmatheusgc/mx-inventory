@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { ITEM_CONFIGS } from '../config/items';
 
-export type ItemType = 'weapon_primary' | 'weapon_secondary' | 'weapon_pistol' | 'weapon_melee' | 'helmet' | 'armor' | 'vest' | 'backpack' | 'generic' | 'magazine' | 'attachment_scope' | 'attachment_grip' | 'attachment_muzzle' | 'attachment_skin' | 'weapon_smg' | 'weapon_rifle' | 'weapon_sniper' | 'weapon_shotgun';
+export type ItemType = 'weapon_primary' | 'weapon_secondary' | 'weapon_pistol' | 'weapon_melee' | 'helmet' | 'mask' | 'earpiece' | 'armor' | 'vest' | 'backpack' | 'generic' | 'magazine' | 'attachment_scope' | 'attachment_grip' | 'attachment_muzzle' | 'attachment_skin' | 'weapon_smg' | 'weapon_rifle' | 'weapon_sniper' | 'weapon_shotgun';
 
 export interface Item {
     name: string;

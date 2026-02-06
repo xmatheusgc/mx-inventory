@@ -14,7 +14,7 @@ export const Tooltip: React.FC<TooltipProps> = ({ label, description, visible, p
     // Use portal to ensure it's on top of everything
     return createPortal(
         <div
-            className="fixed pointer-events-none z-[9999] flex flex-col w-56 bg-zinc-900/95 backdrop-blur-md border border-zinc-700/80 shadow-2xl rounded p-2"
+            className="fixed pointer-events-none z-[9999] flex flex-col w-56 bg-surface-dark/95 backdrop-blur-md border border-border-dark/80 shadow-2xl rounded p-2"
             style={{
                 left: position.x + 15,
                 top: position.y + 15
@@ -26,23 +26,23 @@ export const Tooltip: React.FC<TooltipProps> = ({ label, description, visible, p
             </div>
 
             {/* Divider */}
-            <div className="h-px bg-gradient-to-r from-zinc-700 via-zinc-600 to-zinc-700 my-1.5" />
+            <div className="h-px bg-gradient-to-r from-border-dark via-border-light to-border-dark my-1.5" />
 
             {/* Content Body */}
-            <div className="flex flex-col gap-1 text-[0.7rem] text-zinc-400 font-medium">
+            <div className="flex flex-col gap-1 text-[0.7rem] text-text-subtle font-medium">
                 <div className="flex items-center gap-2">
-                    <span className="text-orange-500 font-bold">[F]</span>
+                    <span className="text-primary font-bold">[F]</span>
                     <span>Mover item</span>
                 </div>
                 <div className="flex items-center gap-2">
-                    <span className="text-red-500 font-bold">[X]</span>
+                    <span className="text-error font-bold">[X]</span>
                     <span>Descartar item</span>
                 </div>
             </div>
 
             {/* Optional Description if needed later */}
             {description && (
-                <div className="mt-2 text-xs text-zinc-500 italic">
+                <div className="mt-2 text-xs text-text-muted italic">
                     {description}
                 </div>
             )}

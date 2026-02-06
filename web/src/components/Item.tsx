@@ -189,8 +189,8 @@ export const ItemView: React.FC<ItemProps & {
                 {...listeners}
                 {...attributes}
                 className={twMerge(
-                    "absolute bg-zinc-800 border border-zinc-600 flex flex-col items-center justify-center select-none overflow-hidden transition-none shadow-lg hover:border-orange-500/50 group cursor-grab active:cursor-grabbing",
-                    (isDragging || isOverlay) && "z-50 shadow-orange-500/20 scale-105 ring-2 ring-orange-500",
+                    "absolute bg-surface-light border border-border-light flex flex-col items-center justify-center select-none overflow-hidden transition-none shadow-lg hover:border-primary/50 group cursor-grab active:cursor-grabbing",
+                    (isDragging || isOverlay) && "z-50 shadow-primary/20 scale-105 ring-2 ring-primary",
                     isDragging && !isOverlay && "opacity-50" // Ghost item visible but transparent
                 )}
                 style={style}
@@ -203,7 +203,7 @@ export const ItemView: React.FC<ItemProps & {
                 {image ? (
                     <img src={image} alt={name} className="w-full h-full object-contain p-1 pointer-events-none" />
                 ) : (
-                    <span className="text-xs text-center text-gray-300 px-1 pointer-events-none">{label || name}</span>
+                    <span className="text-xs text-center text-text-subtle px-1 pointer-events-none">{label || name}</span>
                 )}
                 {count > 1 && (
                     <span className="absolute bottom-0 right-0 p-0.5 text-[0.6rem] font-bold bg-black/50 text-white pointer-events-none">

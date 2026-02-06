@@ -9,13 +9,36 @@
   --color-blue-500: #3b82f6;
   --color-yellow-500: #eab308;
   --color-gray-300: #d1d5db;
+  --color-zinc-100: #f4f4f5;
+  --color-zinc-200: #e4e4e7;
+  --color-zinc-300: #d4d4d8;
   --color-zinc-400: #a1a1aa;
   --color-zinc-500: #71717a;
   --color-zinc-600: #52525b;
   --color-zinc-700: #3f3f46;
   --color-zinc-800: #27272a;
   --color-zinc-900: #18181b;
+  --color-red-300: #fca5a5;
+  --color-red-400: #f87171;
+  --color-red-500: #ef4444;
+  --color-orange-400: #fb923c;
   --color-orange-500: #f97316;
+  --color-orange-600: #ea580c;
+  --color-orange-600: #ea580c;
+
+  /* Semantic Tokens */
+  --color-surface-dark: var(--color-zinc-900);
+  --color-surface-light: var(--color-zinc-800);
+
+  --color-border-light: var(--color-zinc-600);
+  --color-border-dark: var(--color-zinc-700);
+
+  --color-text-muted: var(--color-zinc-500);
+  --color-text-subtle: var(--color-zinc-400);
+
+  --color-primary: var(--color-orange-500);
+  --color-success: var(--color-green-500);
+  --color-error: var(--color-red-500);
 }
 
 :root {
