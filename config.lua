@@ -2,6 +2,8 @@ Config = {}
 
 Config.Debug = true
 
+Config.Framework = 'standalone' -- 'qb', 'esx', 'standalone'
+
 -- Inventory Configuration
 Config.Inventory = {
     Slots = { width = 6, height = 3 }, -- Player Main Inventory

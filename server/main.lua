@@ -1,6 +1,12 @@
 local ItemDefs = Config.Items
+-- DB is global now (loaded from server/db.lua)
 
--- Calculate total weight of a list of items
+-- Initialize Database
+Citizen.CreateThread(function()
+    DB.Init()
+end)
+
+-- Helper: Calculate Weight
 local function GetContainerWeight(items)
     local total = 0.0
     for _, item in ipairs(items) do
@@ -12,31 +18,63 @@ local function GetContainerWeight(items)
     return total
 end
 
-local function CreateStarterInventory()
-    return {
-        player = {
-            { name = 'water',  count = 1, slot = { x = 1, y = 1 } },
-            { name = 'bread',  count = 2, slot = { x = 2, y = 1 } },
-            { name = 'pistol', count = 1, slot = { x = 3, y = 1 } }
-        },
-        backpack = {
-            { name = 'bandage', count = 2, slot = { x = 1, y = 7 } }, -- In Pocket 1
-            { name = 'knife',   count = 1, slot = { x = 3, y = 7 } }, -- In Pocket 2
-            { name = 'medkit',  count = 1, slot = { x = 5, y = 7 } }  -- In Pocket 3
-        }
-    }
-end
-
 local Inventory = {}
 
+-- Load Player Data
+local function LoadPlayer(src)
+    -- Use direct global call instead of export to avoid potential deadlocks/overhead
+    local player = MX_GetPlayer(src)
+    if not player then return end
+
+    if not Inventory[src] then
+        local dbData = DB.LoadPlayer(player.identifier)
+        if not dbData or #dbData == 0 then
+            -- Starter Kit
+            Inventory[src] = {
+                player = {
+                    { name = 'water', count = 1, slot = { x = 1, y = 1 } },
+                    { name = 'bread', count = 2, slot = { x = 2, y = 1 } }
+                }
+            }
+        else
+            Inventory[src] = { player = dbData }
+        end
+        print('^2[mx-inv] Loaded inventory for ' .. player.name .. '^0')
+    end
+end
+
+-- Event: Player Joining
+AddEventHandler('playerJoining', function()
+    local src = source
+    Citizen.CreateThread(function()
+        -- Wait for DB to be ready
+        while not DB.Ready do Wait(100) end
+        LoadPlayer(src)
+    end)
+end)
+
+-- Event: Resource Start (Load existing players)
+AddEventHandler('onResourceStart', function(resourceName)
+    if (GetCurrentResourceName() ~= resourceName) then return end
+    Citizen.CreateThread(function()
+        while not DB.Ready do Wait(100) end
+        local players = GetPlayers()
+        for _, src in ipairs(players) do
+            LoadPlayer(tonumber(src))
+        end
+    end)
+end)
+
+-- Open Inventory (Now instant)
 RegisterNetEvent('mx-inv:server:openInventory', function()
     local src = source
     if not Inventory[src] then
-        Inventory[src] = CreateStarterInventory()
+        -- Try to load if missing (failsafe)
+        LoadPlayer(src)
+        if not Inventory[src] then return end
     end
 
     local containers = Inventory[src]
-
     local playerData = {
         id = 'player-inv',
         type = 'player',
@@ -47,43 +85,15 @@ RegisterNetEvent('mx-inv:server:openInventory', function()
         weight = GetContainerWeight(containers.player or {})
     }
 
-    -- "Backpack" Layout:
-    -- Main Compartment: 6x5
-    -- Gap: Row 6 (Empty)
-    -- Pockets: Row 7-8 (3 pockets of 2x2)
-    --  Pocket 1: x:1-2
-    --  Pocket 2: x:3-4
-    --  Pocket 3: x:5-6
-
-    local backpackSlots = {}
-    -- Main Compartment (Rows 1-5, Cols 1-6)
-    for y = 1, 5 do
-        for x = 1, 6 do
-            table.insert(backpackSlots, { x = x, y = y })
-        end
-    end
-    -- Pockets (Rows 7-8)
-    for y = 7, 8 do
-        -- Pocket 1
-        table.insert(backpackSlots, { x = 1, y = y })
-        table.insert(backpackSlots, { x = 2, y = y })
-        -- Pocket 2
-        table.insert(backpackSlots, { x = 3, y = y })
-        table.insert(backpackSlots, { x = 4, y = y })
-        -- Pocket 3
-        table.insert(backpackSlots, { x = 5, y = y })
-        table.insert(backpackSlots, { x = 6, y = y })
-    end
-
+    -- Secondary Container (Test Backpack)
     local backpackData = {
         id = 'backpack-1',
         type = 'bag',
         label = 'Large Backpack',
-        size = { width = 6, height = 8 },
-        items = containers.backpack or {},
-        validSlots = backpackSlots,
+        size = { width = 6, height = 5 },
+        items = {},
         maxWeight = 20.0,
-        weight = GetContainerWeight(containers.backpack or {})
+        weight = 0
     }
 
     TriggerClientEvent('mx-inv:client:openInventory', src, {
@@ -91,6 +101,19 @@ RegisterNetEvent('mx-inv:server:openInventory', function()
         secondary = backpackData,
         itemDefs = ItemDefs
     })
+end)
+
+-- Save on Drop
+AddEventHandler('playerDropped', function(reason)
+    local src = source
+    if Inventory[src] then
+        local player = exports['mx-inv']:GetPlayer(src)
+        if player then
+            DB.SavePlayer(player.identifier, Inventory[src].player)
+            print('^2[mx-inv] Saved inventory for ' .. player.name .. '^0')
+        end
+        Inventory[src] = nil
+    end
 end)
 
 RegisterNetEvent('mx-inv:server:moveItem', function(data)
@@ -103,20 +126,17 @@ RegisterNetEvent('mx-inv:server:moveItem', function(data)
     local toId = data.to
     local targetSlot = data.slot
 
-    local function GetContainerKey(id)
-        if id == 'player-inv' then return 'player' end
-        if id == 'backpack-1' then return 'backpack' end
+    local function GetItems(id)
+        if id == 'player-inv' then return containerMap.player end
         return nil
     end
 
-    local fromKey = GetContainerKey(fromId)
-    local toKey = GetContainerKey(toId)
+    local fromItems = GetItems(fromId)
+    local toItems = GetItems(toId)
 
-    if not fromKey or not toKey then return end
+    if not fromItems or not toItems then return end
 
-    local fromItems = containerMap[fromKey]
-    local toItems = containerMap[toKey]
-
+    -- Find Item
     local itemIndex = nil
     for i, item in ipairs(fromItems) do
         if item.name == itemName then
@@ -128,28 +148,14 @@ RegisterNetEvent('mx-inv:server:moveItem', function(data)
     if not itemIndex then return end
     local item = fromItems[itemIndex]
 
-    -- Validate Move Weight if changing containers
-    if fromKey ~= toKey then
-        local itemDef = ItemDefs[item.name]
-        if itemDef and itemDef.weight then
-            local currentWeight = GetContainerWeight(toItems)
-            if (currentWeight + (itemDef.weight * item.count)) > (toKey == 'player' and 40.0 or 20.0) then
-                -- Overweight!
-                --Ideally prevent move and notify client.
-                --For now, simple return to cancel server side. UI might need rollback or check before sending.
-                return
-            end
-        end
-    end
-
-    -- Remove from old
+    -- Move Logic
     table.remove(fromItems, itemIndex)
     item.slot = targetSlot
     table.insert(toItems, item)
 
-    -- Ideally send back the new weights to client to stay in sync
-    TriggerClientEvent('mx-inv:client:updateWeights', src, {
-        [fromKey] = GetContainerWeight(fromItems),
-        [toKey] = GetContainerWeight(toItems)
-    })
+    -- Auto-Save
+    local player = exports['mx-inv']:GetPlayer(src)
+    if player then
+        DB.SavePlayer(player.identifier, containerMap.player)
+    end
 end)
