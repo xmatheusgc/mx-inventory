@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useInventoryStore } from './store/inventoryStore';
-import { debugData, fetchNui } from './utils/nui';
+import { fetchNui } from './utils/nui';
 import { Container } from './components/Container';
 import { ItemView } from './components/Item';
 import { EquipmentPanel } from './components/EquipmentPanel';
@@ -15,49 +15,6 @@ import { DndContext, type DragEndEvent, type DragMoveEvent, useSensor, useSensor
 interface WeightUpdate {
   [key: string]: number;
 }
-
-const debugPlayerItems = [
-  { name: 'water', count: 1, slot: { x: 1, y: 1 }, label: 'Water', size: { x: 1, y: 2 }, weight: 0.5, type: 'generic' },
-  { name: 'pistol', count: 1, slot: { x: 3, y: 1 }, label: 'Pistol', size: { x: 2, y: 2 }, weight: 1.5, type: 'weapon_pistol' },
-  { name: 'helmet', count: 1, slot: { x: 1, y: 4 }, label: 'Helmet', size: { x: 2, y: 2 }, weight: 0.8, type: 'helmet' },
-  { name: 'rifle', count: 1, slot: { x: 3, y: 4 }, label: 'Rifle', size: { x: 4, y: 2 }, weight: 3.5, type: 'weapon_primary' },
-];
-
-const debugVestItems = [
-  { name: 'bandage', count: 2, slot: { x: 1, y: 1 }, label: 'Bandage', size: { x: 1, y: 1 }, weight: 0.1, type: 'generic' },
-];
-
-debugData([
-  {
-    action: 'open',
-    data: {
-      player: {
-        id: 'player-inv',
-        type: 'player',
-        label: 'Player Inventory',
-        size: { width: 6, height: 3 },
-        items: debugPlayerItems,
-        weight: 2.0,
-        maxWeight: 40.0
-      },
-      secondary: {
-        id: 'vest-1',
-        type: 'vest',
-        label: 'Tactical Vest',
-        size: { width: 6, height: 6 },
-        items: debugVestItems,
-        weight: 0.2,
-        maxWeight: 10.0,
-        validSlots: [
-          { x: 1, y: 1 }, { x: 2, y: 1 }, { x: 4, y: 1 }, { x: 5, y: 1 }, { x: 6, y: 1 },
-          { x: 1, y: 2 }, { x: 2, y: 2 }, { x: 4, y: 2 }, { x: 5, y: 2 }, { x: 6, y: 2 },
-          { x: 1, y: 3 }, { x: 2, y: 3 }, { x: 4, y: 3 }, { x: 5, y: 3 }, { x: 6, y: 3 },
-          { x: 1, y: 4 }, { x: 2, y: 4 }, { x: 4, y: 4 }, { x: 5, y: 4 }, { x: 6, y: 4 },
-        ]
-      }
-    }
-  }
-]);
 
 const SLOT_SIZE = 64;
 const GAP = 0; // User requested no spacing
@@ -115,6 +72,14 @@ function App() {
 
           if (data.player) {
             const enriched = { ...data.player, items: enrichItems(data.player.items) };
+            setContainerData(enriched.id, enriched);
+          }
+          if (data.vest) {
+            const enriched = { ...data.vest, items: enrichItems(data.vest.items) };
+            setContainerData(enriched.id, enriched);
+          }
+          if (data.backpack) {
+            const enriched = { ...data.backpack, items: enrichItems(data.backpack.items) };
             setContainerData(enriched.id, enriched);
           }
           if (data.secondary) {
@@ -823,7 +788,6 @@ function App() {
           />
         ))}
 
-        {/* Item Details Window */}
         {/* Item Details Window */}
         {detailsWindows.map((item) => (
           <ItemDetailsWindow

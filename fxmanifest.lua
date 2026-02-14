@@ -9,7 +9,10 @@ dependencies {
     'oxmysql',
 }
 
-shared_script 'config.lua'
+shared_scripts {
+    'config.lua',
+    'data/items.lua'
+}
 
 client_script 'client/main.lua'
 server_scripts {
