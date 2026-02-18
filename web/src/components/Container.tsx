@@ -152,6 +152,7 @@ export const Container: React.FC<ContainerProps> = ({ containerId, droppableId, 
                             // We copy the item but shift its visual slot for rendering
                             const visualItem = {
                                 ...item,
+                                originalSlot: item.slot,
                                 slot: {
                                     x: item.slot.x - offsetX,
                                     y: item.slot.y - offsetY

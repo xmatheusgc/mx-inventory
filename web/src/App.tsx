@@ -29,7 +29,7 @@ interface HighlightState {
 function App() {
   const {
     isOpen, setOpen, setContainerData, moveItem, containers, updateContainerWeight,
-    equipment, setEquipment, equipItem, unequipItem, toggleItemFold, setContainers,
+    equipment, setEquipment, equipItem, unequipItem, swapEquipment, toggleItemFold, setContainers,
     openWindows, closeWindow, detailsWindows, closeDetails
   } = useInventoryStore();
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -99,7 +99,24 @@ function App() {
           setContainers(newContainers);
 
           if (data.equipment) {
-            setEquipment(data.equipment);
+            // Enrich equipment items individually
+            const enrichedEquipment: Record<string, any> = {};
+            Object.entries(data.equipment).forEach(([key, item]: [string, any]) => {
+              if (item) {
+                // Enrich single item
+                const def = itemDefs ? itemDefs[item.name] : {};
+                enrichedEquipment[key] = {
+                  ...def,
+                  ...item,
+                  size: def?.size || item.size || { x: 1, y: 1 },
+                  weight: def?.weight || item.weight || 0,
+                  type: def?.type || item.type || 'generic'
+                };
+              } else {
+                enrichedEquipment[key] = null;
+              }
+            });
+            setEquipment(enrichedEquipment);
           }
         }
       } else if (action === 'close') {
@@ -462,8 +479,15 @@ function App() {
 
       // If Logic: Equip Item
       if (fromContainerId.startsWith('equip-')) {
-        // Moving from Equip to Equip? (Swap or Move)
-        // Implementation delayed for simplicity or handle if types match
+        // Moving from Equip to Equip (Swap or Move)
+        const fromSlotId = fromContainerId.replace('equip-', '');
+        if (fromSlotId === targetSlotId) return; // Same slot, no-op
+        swapEquipment(fromSlotId, targetSlotId);
+        fetchNui('swapEquipment', {
+          item: itemName,
+          fromSlot: fromSlotId,
+          toSlot: targetSlotId
+        });
       } else {
         // Moving from Container to Equip
         equipItem(targetSlotId, item, fromContainerId);
@@ -531,6 +555,7 @@ function App() {
         from: fromContainerId,
         to: baseId,
         slot: { x: slotX, y: slotY },
+        fromSlot: item.slot,
         rotated: finalRotation
       });
     }

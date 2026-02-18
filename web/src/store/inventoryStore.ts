@@ -52,6 +52,7 @@ interface InventoryState {
     updateContainerWeight: (containerId: string, weight: number) => void;
     equipItem: (slot: string, item: Item, fromContainerId: string) => void;
     unequipItem: (slot: string, toContainerId: string, targetSlot: { x: number, y: number }) => void;
+    swapEquipment: (fromSlot: string, toSlot: string) => void;
     toggleItemFold: (containerId: string, itemName: string) => void;
 
     // UI Actions
@@ -341,8 +342,15 @@ export const useInventoryStore = create<InventoryState>((set) => ({
         // Remove from equipment
         const newEquipment = { ...state.equipment, [slot]: null };
 
+        // Restore Size (Expanded)
+        let newItem = { ...item, slot: targetSlot, rotated: false, folded: false };
+        const config = ITEM_CONFIGS[item.name];
+        if (config) {
+            newItem.size = config.expandedSize;
+        }
+
         // Add to target container
-        const newTargetItems = [...targetContainer.items, { ...item, slot: targetSlot, rotated: false }];
+        const newTargetItems = [...targetContainer.items, newItem];
 
         return {
             containers: {
@@ -350,6 +358,21 @@ export const useInventoryStore = create<InventoryState>((set) => ({
                 [toContainerId]: { ...targetContainer, items: newTargetItems }
             },
             equipment: newEquipment
+        };
+    }),
+
+    swapEquipment: (fromSlot: string, toSlot: string) => set((state: InventoryState) => {
+        const fromItem = state.equipment[fromSlot];
+        if (!fromItem) return state;
+
+        const toItem = state.equipment[toSlot]; // Can be null (simple move) or Item (swap)
+
+        return {
+            equipment: {
+                ...state.equipment,
+                [fromSlot]: toItem,  // Put target's item (or null) into source slot
+                [toSlot]: fromItem   // Put source's item into target slot
+            }
         };
     }),
 

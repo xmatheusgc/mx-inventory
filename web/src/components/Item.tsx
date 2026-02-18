@@ -18,6 +18,7 @@ interface ItemProps {
     image?: string;
     size?: { x: number; y: number };
     slot: { x: number; y: number }; // 1-indexed
+    originalSlot?: { x: number; y: number }; // Global slot for server actions (if different from visual slot)
     isDragging?: boolean;
     rotated?: boolean;
     isEquipment?: boolean;
@@ -38,7 +39,7 @@ export const ItemView: React.FC<ItemProps & {
 }> = (props) => {
     const {
         name, count, label, image, isDragging, isOverlay,
-        style, listeners, attributes, innerRef, type, containerId, slot,
+        style, listeners, attributes, innerRef, type, containerId, slot, originalSlot,
         description, weight, size, rotated
     } = props;
 
@@ -122,7 +123,7 @@ export const ItemView: React.FC<ItemProps & {
     const handleAction = (action: string, qty: number = 1) => {
         const payload = {
             item: name,
-            slot: slot, // Pass full slot object usually, or ID if equipment
+            slot: originalSlot || slot, // Use Original Global Slot if available
             container: containerId,
             amount: qty
         };

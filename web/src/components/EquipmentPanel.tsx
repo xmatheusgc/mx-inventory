@@ -42,10 +42,10 @@ export const EquipmentPanel: React.FC = () => {
                 {/* Primary & Secondary */}
                 <div className="flex flex-col gap-2 bg-black/60 p-1">
                     <div className='bg-black/40'>
-                        <EquipmentSlot slotId="primary" label="Primary Weapon" className="w-62 h-30" acceptedTypes={['weapon_primary', 'weapon_smg', 'weapon_rifle']} />
+                        <EquipmentSlot slotId="primary" label="Primary Weapon" className="w-62 h-30" acceptedTypes={['weapon_primary', 'weapon_secondary', 'weapon_smg', 'weapon_rifle', 'weapon_sniper', 'weapon_shotgun']} />
                     </div>
                     <div className='bg-black/40'>
-                        <EquipmentSlot slotId="secondary" label="Secondary Weapon" className="w-62 h-30" acceptedTypes={['weapon_secondary', 'weapon_sniper', 'weapon_shotgun']} />
+                        <EquipmentSlot slotId="secondary" label="Secondary Weapon" className="w-62 h-30" acceptedTypes={['weapon_primary', 'weapon_secondary', 'weapon_smg', 'weapon_rifle', 'weapon_sniper', 'weapon_shotgun']} />
                     </div>
                 </div>
 
