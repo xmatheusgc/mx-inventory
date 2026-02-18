@@ -4,7 +4,7 @@ import { useInventoryStore } from '../store/inventoryStore';
 import { useDroppable } from '@dnd-kit/core';
 import { twMerge } from 'tailwind-merge';
 
-const SLOT_SIZE = 64;
+const SLOT_SIZE = 62;
 const GAP = 0;
 
 interface HighlightData {
@@ -120,7 +120,7 @@ export const Container: React.FC<ContainerProps> = ({ containerId, droppableId, 
         : items;
 
     return (
-        <div className="flex flex-col gap-2 border border-white/20">
+        <div className="flex flex-col gap-2 border border-white/20 w-fit">
             <div
                 ref={setNodeRef}
                 className="relative bg-black/40 w-fit h-fit overflow-hidden"

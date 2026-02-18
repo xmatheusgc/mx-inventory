@@ -178,6 +178,84 @@ RegisterNetEvent('mx-inv:server:openInventory', function()
     OpenInventory(source)
 end)
 
+-- Debug: Open Stash with Real Inventory
+RegisterNetEvent('mx-inv:server:openStash', function()
+    local src = source
+
+    -- Ensure Loaded
+    if not Inventory[src] then
+        LoadPlayer(src)
+        if not Inventory[src] then
+            return
+        end
+    end
+
+    local containers = Inventory[src]
+
+    -- Debug Prints for Vest
+    local vestItems = containers['rig_st_tipo_4'] or {}
+
+    local playerData = {
+        id = 'player-inv',
+        type = 'player',
+        label = 'Player Inventory',
+        size = Config.Inventory.Slots,
+        items = containers.player or {},
+        maxWeight = Config.Inventory.MaxWeight,
+        weight = GetContainerWeight(containers.player or {})
+    }
+
+    local vestData = {
+        id = 'rig_st_tipo_4',
+        type = 'vest',
+        label = 'ST Tipo 4',
+        size = { ["width"] = 4, ["height"] = 10 },
+        items = vestItems,
+        weight = GetContainerWeight(vestItems)
+    }
+
+    local bagData = {
+        id = 'mochila_tatica_expansivel_luc',
+        type = 'bag',
+        label = 'Mochila Tática Expansível Luc',
+        size = { ["width"] = 5, ["height"] = 10 },
+        items = containers['mochila_tatica_expansivel_luc'] or {},
+        weight = GetContainerWeight(containers['mochila_tatica_expansivel_luc'] or {})
+    }
+
+    -- Add Debug Stash
+    local stashData = {
+        id = 'stash-debug',
+        label = 'Debug Stash (Real Inv)',
+        type = 'stash',
+        size = { width = 7, height = 10 },
+        items = {},
+        weight = 0
+    }
+
+    -- Construct Equipment Data (since we don't have it fully persisted yet)
+    local equipmentData = {
+        head = nil,
+        armor = nil,
+        legs = nil,
+        backpack = { name = 'mochila_tatica_expansivel_luc', count = 1, slot = { x = 1, y = 1 }, size = { x = 4, y = 5 }, type = 'backpack' },
+        primary = nil,
+        secondary = nil,
+        pistol = nil,
+        melee = nil,
+        vest = { name = 'rig_st_tipo_4', count = 1, slot = { x = 1, y = 1 }, size = { x = 3, y = 3 }, type = 'vest' },
+    }
+
+    TriggerClientEvent('mx-inv:client:openInventory', src, {
+        player = playerData,
+        vest = vestData,
+        backpack = bagData,
+        ['stash-debug'] = stashData,
+        equipment = equipmentData,
+        itemDefs = ItemDefs
+    })
+end)
+
 -- Save on Drop
 AddEventHandler('playerDropped', function(reason)
     local src = source

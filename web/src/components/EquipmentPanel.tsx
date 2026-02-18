@@ -8,17 +8,17 @@ export const EquipmentPanel: React.FC = () => {
     const { shortcuts, containers, equipment } = useInventoryStore();
 
     return (
-        <div className="flex flex-col gap-2 p-4 rounded-lg min-w-[520px]">
+        <div className="flex flex-col gap-2 p-4 rounded-lg w-[500px] flex flex-col gap-4 overflow-hidden pt-6">
             {/* Main Gear Section (Split for Ped) - Reduced Height */}
             <div className="flex justify-between items-start h-[280px] shrink-0">
                 {/* Left Column (Head/Face) */}
                 <div className="flex flex-col gap-2 bg-black/60 p-1">
                     <div className='bg-black/40'>
-                        <EquipmentSlot slotId="head" label="Head" className="w-32 h-32" acceptedTypes={['helmet']} />
+                        <EquipmentSlot slotId="head" label="Head" className="w-30 h-30" acceptedTypes={['helmet']} />
                     </div>
                     {/* Face */}
                     <div className='bg-black/40'>
-                        <EquipmentSlot slotId="face" label="Face" className="w-32 h-32" acceptedTypes={['mask']} />
+                        <EquipmentSlot slotId="face" label="Face" className="w-30 h-30" acceptedTypes={['mask']} />
                     </div>
                 </div>
 
@@ -28,11 +28,11 @@ export const EquipmentPanel: React.FC = () => {
                 {/* Right Column (Body/Earpiece) */}
                 <div className="flex flex-col gap-2 bg-black/60 p-1">
                     <div className='bg-black/40'>
-                        <EquipmentSlot slotId="armor" label="Armor" className="w-32 h-32" acceptedTypes={['armor']} />
+                        <EquipmentSlot slotId="armor" label="Armor" className="w-30 h-30" acceptedTypes={['armor']} />
                     </div>
                     {/* Earpiece */}
                     <div className='bg-black/40'>
-                        <EquipmentSlot slotId="earpiece" label="Earpiece" className="w-32 h-32" acceptedTypes={['earpiece']} />
+                        <EquipmentSlot slotId="earpiece" label="Earpiece" className="w-30 h-30" acceptedTypes={['earpiece']} />
                     </div>
                 </div>
             </div>
@@ -42,20 +42,20 @@ export const EquipmentPanel: React.FC = () => {
                 {/* Primary & Secondary */}
                 <div className="flex flex-col gap-2 bg-black/60 p-1">
                     <div className='bg-black/40'>
-                        <EquipmentSlot slotId="primary" label="Primary Weapon" className="w-64 h-32" acceptedTypes={['weapon_primary', 'weapon_smg', 'weapon_rifle']} />
+                        <EquipmentSlot slotId="primary" label="Primary Weapon" className="w-62 h-30" acceptedTypes={['weapon_primary', 'weapon_smg', 'weapon_rifle']} />
                     </div>
                     <div className='bg-black/40'>
-                        <EquipmentSlot slotId="secondary" label="Secondary Weapon" className="w-64 h-32" acceptedTypes={['weapon_secondary', 'weapon_sniper', 'weapon_shotgun']} />
+                        <EquipmentSlot slotId="secondary" label="Secondary Weapon" className="w-62 h-30" acceptedTypes={['weapon_secondary', 'weapon_sniper', 'weapon_shotgun']} />
                     </div>
                 </div>
 
                 {/* Sidearm & Melee (Stacked Vertically) */}
                 <div className="flex flex-col gap-2 bg-black/60 p-1">
                     <div className='bg-black/40'>
-                        <EquipmentSlot slotId="pistol" label="Holster" className="w-32 h-32" acceptedTypes={['weapon_pistol']} />
+                        <EquipmentSlot slotId="pistol" label="Holster" className="w-30 h-30" acceptedTypes={['weapon_pistol']} />
                     </div>
                     <div className='bg-black/40'>
-                        <EquipmentSlot slotId="melee" label="Melee" className="w-32 h-32" acceptedTypes={['weapon_melee']} />
+                        <EquipmentSlot slotId="melee" label="Melee" className="w-30 h-30" acceptedTypes={['weapon_melee']} />
                     </div>
                 </div>
             </div>

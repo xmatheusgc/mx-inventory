@@ -39,6 +39,7 @@ interface InventoryState {
     equipment: Record<string, Item | null>; // head, body, primary, etc.
     setOpen: (isOpen: boolean) => void;
     setContainerData: (id: string, data: ContainerData) => void;
+    setContainers: (containers: Record<string, ContainerData>) => void;
     setEquipment: (data: Record<string, Item | null>) => void;
     moveItem: (
         fromContainerId: string,
@@ -156,6 +157,7 @@ export const useInventoryStore = create<InventoryState>((set) => ({
         set((state: InventoryState) => ({
             containers: { ...state.containers, [id]: data }
         })),
+    setContainers: (containers: Record<string, ContainerData>) => set({ containers }),
 
     // Details
     detailsWindows: [],
@@ -361,6 +363,15 @@ export const useInventoryStore = create<InventoryState>((set) => ({
             const item = container.items[itemIndex];
             const newFolded = !item.folded;
 
+            // Restriction: Cannot fold if container has items
+            if (newFolded) { // Attempting to fold (turn folded=true)
+                const internalContainer = state.containers[item.name];
+                if (internalContainer && internalContainer.items.length > 0) {
+                    console.warn("Cannot fold a container that has items inside!");
+                    return state;
+                }
+            }
+
             let newSize = item.size;
             const config = ITEM_CONFIGS[item.name];
             if (config) {
@@ -398,6 +409,16 @@ export const useInventoryStore = create<InventoryState>((set) => ({
             if (!item) return state;
 
             const newFolded = !item.folded;
+
+            // Restriction: Cannot fold if container has items
+            if (newFolded) { // Attempting to fold (turn folded=true)
+                const internalContainer = state.containers[item.name];
+                if (internalContainer && internalContainer.items.length > 0) {
+                    console.warn("Cannot fold a container that has items inside!");
+                    return state;
+                }
+            }
+
             let newSize = item.size;
             const config = ITEM_CONFIGS[item.name];
             if (config) {

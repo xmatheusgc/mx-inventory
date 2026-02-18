@@ -1,15 +1,16 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useInventoryStore } from './store/inventoryStore';
-import { fetchNui } from './utils/nui';
-import { Container } from './components/Container';
+import { fetchNui, isEnvBrowser } from './utils/nui';
+import { mockContainers, mockEquipment } from './utils/mockData';
 import { ItemView } from './components/Item';
 import { EquipmentPanel } from './components/EquipmentPanel';
-import { EquipmentSlot } from './components/EquipmentSlot';
 import { ContainerWindow } from './components/ContainerWindow';
 import { ItemDetailsWindow } from './components/ItemDetailsWindow';
 import { snapCenterToCursor } from './utils/modifiers';
 import { CONTAINER_LAYOUTS } from './config/layouts';
 import { DndContext, type DragEndEvent, type DragMoveEvent, useSensor, useSensors, PointerSensor, rectIntersection, DragOverlay } from '@dnd-kit/core';
+import { PlayerInventory } from './components/PlayerInventory';
+import { StashInventory } from './components/StashInventory';
 
 // Mock data
 interface WeightUpdate {
@@ -28,7 +29,7 @@ interface HighlightState {
 function App() {
   const {
     isOpen, setOpen, setContainerData, moveItem, containers, updateContainerWeight,
-    equipment, equipItem, unequipItem, toggleItemFold,
+    equipment, setEquipment, equipItem, unequipItem, toggleItemFold, setContainers,
     openWindows, closeWindow, detailsWindows, closeDetails
   } = useInventoryStore();
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -47,6 +48,20 @@ function App() {
       },
     })
   );
+
+  // Browser Dev Mode: Auto-Open & Load Mocks
+  useEffect(() => {
+    if (isEnvBrowser()) {
+      setOpen(true);
+      document.body.style.backgroundColor = '#1a1a1a'; // Dark background
+
+      // Load Mocks so UI isn't empty
+      Object.values(mockContainers).forEach((c: any) => setContainerData(c.id, c));
+      setEquipment(mockEquipment as any);
+    }
+  }, [setOpen, setContainerData, setEquipment]);
+
+
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -70,21 +85,21 @@ function App() {
             };
           });
 
-          if (data.player) {
-            const enriched = { ...data.player, items: enrichItems(data.player.items) };
-            setContainerData(enriched.id, enriched);
-          }
-          if (data.vest) {
-            const enriched = { ...data.vest, items: enrichItems(data.vest.items) };
-            setContainerData(enriched.id, enriched);
-          }
-          if (data.backpack) {
-            const enriched = { ...data.backpack, items: enrichItems(data.backpack.items) };
-            setContainerData(enriched.id, enriched);
-          }
-          if (data.secondary) {
-            const enriched = { ...data.secondary, items: enrichItems(data.secondary.items) };
-            setContainerData(enriched.id, enriched);
+          // Dynamic Container Loading
+          const newContainers: Record<string, any> = {};
+
+          Object.entries(data).forEach(([key, value]: [string, any]) => {
+            if (key === 'itemDefs') return;
+            if (typeof value === 'object' && value !== null && value.items) {
+              const enriched = { ...value, items: enrichItems(value.items) };
+              newContainers[enriched.id] = enriched;
+            }
+          });
+
+          setContainers(newContainers);
+
+          if (data.equipment) {
+            setEquipment(data.equipment);
           }
         }
       } else if (action === 'close') {
@@ -578,7 +593,7 @@ function App() {
   };
 
   // Check if any Loot/Stash is open
-  const isStashOpen = Object.values(containers).some(c => c.id.startsWith('drop-') || c.id.startsWith('stash-'));
+  const isStashOpen = Object.values(containers).some((c: any) => c.id.startsWith('drop-') || c.id.startsWith('stash-'));
 
   if (!isOpen) return null;
 
@@ -591,192 +606,17 @@ function App() {
       onDragEnd={handleDragEnd}
       onDragCancel={handleDragCancel}
     >
-      <div className="flex items-center justify-center min-h-screen w-full h-full text-white font-sans selection:bg-orange-500/30 p-10 transition-all duration-500 ease-in-out">
-        {/* 3-Column Layout - Floating/Immersive */}
-        {/* If Stash Closed: Center the content (max-w fit, margin auto) */}
-        {/* If Stash Open: Expand to full width or shift left */}
-        <div className={`flex gap-8 h-[85vh] mx-auto transition-all duration-500 ease-in-out ${isStashOpen ? 'max-w-[90vw] translate-x-0' : 'max-w-[1200px] translate-x-[0px]'}`}>
+      <div className="flex items-center min-h-screen w-full max-w-[1920px] h-full text-white font-sans selection:bg-orange-500/30 p-10 transition-all duration-500 ease-in-out">
+        <div className={`flex justify-end w-full h-[85vh] gap-6 ${isStashOpen ? 'px-18' : 'px-35'}`}>
           {/* LEFT: Equipment */}
-          {/* If No Stash: We behave normally. */}
-
-          <div className="flex flex-col gap-4 overflow-hidden min-w-[500px] pt-12">
-            <EquipmentPanel />
-          </div>
+          <EquipmentPanel />
 
           {/* CENTER: Player Inventory (Grids) */}
-          <div className="flex flex-col gap-4 overflow-y-auto overflow-x-hidden pt-12 border bg-black/60 border-white/10 min-w-[500px] shrink-0">
-
-            {/* 1. Pockets (Always Top) */}
-            {containers['player-inv'] &&
-              <div className="flex flex-col gap-1 shrink-0 px-4">
-                <h2 className="text-zinc-500 text-xs font-bold uppercase tracking-wider pt-2">Pockets</h2>
-                <div className="flex bg-black/40 overflow-hidden w-fit p-1">
-                  <Container
-                    containerId="player-inv"
-                    highlight={dragHighlight?.containerId === 'player-inv' ? dragHighlight : undefined}
-                  />
-                </div>
-              </div>
-            }
-
-            {/* 2. Vest Section (Slot + Container) */}
-            <div className="flex flex-col gap-1 shrink-0 px-4">
-              <h2 className="text-zinc-500 text-xs font-bold uppercase tracking-wider pt-2">Tactical Vest</h2>
-              <div className="flex bg-black/40 overflow-hidden w-fit p-1">
-                {/* Slot */}
-                <div className="flex flex-col gap-2 shrink-0">
-                  <EquipmentSlot slotId="vest" label="" acceptedTypes={['vest']} className="w-32 h-32" />
-                </div>
-
-                {/* Container (Scrollable Area) */}
-                <div className="flex-1 overflow-x-auto custom-scrollbar-hide">
-                  {Object.values(containers)
-                    .filter((c: any) => c.type === 'vest' && equipment?.vest?.name === c.id)
-                    .map((c: any) => {
-                      const layout = CONTAINER_LAYOUTS[c.id] || CONTAINER_LAYOUTS[c.name] || CONTAINER_LAYOUTS['vest'];
-
-                      if (layout) {
-                        return (
-                          <div key={c.id} className="flex flex-col gap-1 p-2">
-                            {layout.rows.map((row: any, rowIdx: number) => (
-                              <div key={rowIdx} className={row.className || "flex justify-center gap-2"}>
-                                {row.pockets.map((pocket: any, pIdx: number) => {
-                                  // Global Index Calculation
-                                  let globalIndex = 0;
-                                  for (let i = 0; i < rowIdx; i++) {
-                                    globalIndex += layout.rows[i].pockets.length;
-                                  }
-                                  globalIndex += pIdx;
-
-                                  return (
-                                    <div key={globalIndex} className={`flex flex-col ${pocket.className || ''}`}>
-                                      <Container
-                                        containerId={c.id}
-                                        droppableId={`${c.id}::pocket::${globalIndex}`}
-                                        region={pocket}
-                                        highlight={dragHighlight?.containerId === c.id ? dragHighlight : undefined}
-                                      />
-                                    </div>
-                                  )
-                                })}
-                              </div>
-                            ))}
-                          </div>
-                        )
-                      }
-
-                      return (
-                        <div key={c.id} className="flex flex-col gap-1">
-                          <Container
-                            containerId={c.id}
-                            highlight={dragHighlight?.containerId === c.id ? dragHighlight : undefined}
-                          />
-                        </div>
-                      )
-                    })}
-                </div>
-              </div>
-            </div>
-
-            {/* 3. Backpack Section (Slot + Container) */}
-            <div className="flex flex-col gap-1 shrink-0 px-4 pb-4">
-              <h2 className="text-zinc-500 text-xs font-bold uppercase tracking-wider pt-2">Backpack</h2>
-              <div className="flex bg-black/40 overflow-hidden w-fit p-1">
-                {/* Slot */}
-                <div className="flex flex-col gap-2 shrink-0">
-                  <EquipmentSlot slotId="backpack" label="" acceptedTypes={['backpack']} className="w-32 h-32" />
-                </div>
-
-                {/* Container (Scrollable Area) */}
-                <div className="flex-1 overflow-x-auto custom-scrollbar-hide">
-
-                  {/* Container (if exists) */}
-                  {Object.values(containers)
-                    .filter((c: any) => c.type === 'bag' && equipment?.backpack?.name === c.id)
-                    .map((c: any) => {
-                      const layout = CONTAINER_LAYOUTS[c.id] || CONTAINER_LAYOUTS[c.name] || CONTAINER_LAYOUTS['backpack'];
-
-                      if (layout) {
-                        return (
-                          <div key={c.id} className="flex flex-col gap-1 p-2">
-                            {layout.rows.map((row: any, rowIdx: number) => (
-                              <div key={rowIdx} className={row.className || "flex justify-center gap-2"}>
-                                {row.pockets.map((pocket: any, pIdx: number) => {
-                                  // Global Index Calculation
-                                  let globalIndex = 0;
-                                  for (let i = 0; i < rowIdx; i++) {
-                                    globalIndex += layout.rows[i].pockets.length;
-                                  }
-                                  globalIndex += pIdx;
-
-                                  return (
-                                    <div key={globalIndex} className={`flex flex-col ${pocket.className || ''}`}>
-                                      <Container
-                                        containerId={c.id}
-                                        droppableId={`${c.id}::pocket::${globalIndex}`}
-                                        region={pocket}
-                                        highlight={dragHighlight?.containerId === c.id ? dragHighlight : undefined}
-                                      />
-                                    </div>
-                                  )
-                                })}
-                              </div>
-                            ))}
-                          </div>
-                        )
-                      }
-
-                      return (
-                        <div key={c.id} className="flex flex-col gap-1">
-                          <Container
-                            containerId={c.id}
-                            highlight={dragHighlight?.containerId === c.id ? dragHighlight : undefined}
-                          />
-                        </div>
-                      )
-                    })}
-                </div>
-              </div>
-            </div>
-
-            {/* 4. Other Containers */}
-            {Object.values(containers)
-              .filter((c: any) => c.id !== 'player-inv' && c.type !== 'vest' && c.type !== 'bag' && !c.id.startsWith('drop-') && !c.id.startsWith('stash-'))
-              .map((c: any) => (
-                <div key={c.id} className="flex flex-col gap-1 shrink-0 px-4 pb-4">
-                  <h2 className="text-zinc-500 text-xs font-bold uppercase tracking-wider pt-2">{c.label}</h2>
-                  <div className="p-4 border border-white/5 bg-black/40 rounded-sm">
-                    <Container
-                      containerId={c.id}
-                      highlight={dragHighlight?.containerId === c.id ? dragHighlight : undefined}
-                    />
-                  </div>
-                </div>
-              ))
-            }
-          </div>
+          <PlayerInventory dragHighlight={dragHighlight} />
 
           {/* RIGHT: Loot / Stash / Storage */}
           {isStashOpen && (
-            <div className="flex flex-col gap-4 overflow-y-auto overflow-x-hidden min-w-[300px] pt-12 border bg-black/60 border-white/10">
-              {Object.values(containers)
-                .filter((c: any) => c.id.startsWith('drop-') || c.id.startsWith('stash-'))
-                .map((c: any) => (
-                  <div key={c.id} className="flex flex-col gap-1 p-4 bg-black/40 rounded-sm border border-white/5">
-                    <span className="text-zinc-500 text-xs font-bold uppercase tracking-wider">{c.label}</span>
-                    <Container
-                      containerId={c.id}
-                      highlight={dragHighlight?.containerId === c.id ? dragHighlight : undefined}
-                    />
-                  </div>
-                ))
-              }
-              {Object.values(containers).filter((c: any) => c.id.startsWith('drop-') || c.id.startsWith('stash-')).length === 0 && (
-                <div className="flex items-center justify-center flex-1 opacity-20 text-zinc-500 text-sm italic">
-                  No active loot nearby
-                </div>
-              )}
-            </div>
+            <StashInventory dragHighlight={dragHighlight} />
           )}
         </div>
         {/* Floating Container Windows */}

@@ -8,7 +8,7 @@ import { fetchNui } from '../utils/nui';
 import { useInventoryStore } from '../store/inventoryStore';
 
 // Constants for slot size (must match Grid)
-const SLOT_SIZE = 64;
+const SLOT_SIZE = 62;
 const GAP = 0; // px
 
 interface ItemProps {
@@ -25,6 +25,7 @@ interface ItemProps {
     containerId?: string; // Needed for actions to know source
     description?: string;
     weight?: number;
+    folded?: boolean;
 }
 
 // Pure Presentational Component
@@ -94,6 +95,8 @@ export const ItemView: React.FC<ItemProps & {
 
         // Container Check (Backpack/Vest) -> Open Window
         if ((type === 'vest' || type === 'backpack' || type === 'bag') && !props.isEquipment) {
+            // Prevent opening if folded
+            if (props.folded) return;
             toggleWindow(name);
         } else {
             // Other Items -> Open Details
