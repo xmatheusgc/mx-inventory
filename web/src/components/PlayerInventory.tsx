@@ -103,7 +103,7 @@ export const PlayerInventory: React.FC<PlayerInventoryProps> = ({ dragHighlight 
 
                         {/* Container (if exists) */}
                         {Object.values(containers)
-                            .filter((c: any) => c.type === 'bag' && equipment?.backpack?.name === c.id)
+                            .filter((c: any) => c.type === 'backpack' && equipment?.backpack?.name === c.id)
                             .map((c: any) => {
                                 const layout = CONTAINER_LAYOUTS[c.id] || CONTAINER_LAYOUTS[c.name] || CONTAINER_LAYOUTS['backpack'];
 
@@ -152,7 +152,7 @@ export const PlayerInventory: React.FC<PlayerInventoryProps> = ({ dragHighlight 
 
             {/* 4. Other Containers */}
             {Object.values(containers)
-                .filter((c: any) => c.id !== 'player-inv' && c.type !== 'vest' && c.type !== 'bag' && !c.id.startsWith('drop-') && !c.id.startsWith('stash-'))
+                .filter((c: any) => c.id !== 'player-inv' && c.type !== 'vest' && c.type !== 'bag' && c.type !== 'backpack' && !c.id.startsWith('drop-') && !c.id.startsWith('stash-'))
                 .map((c: any) => (
                     <div key={c.id} className="flex flex-col gap-1 shrink-0 px-4 pb-4">
                         <h2 className="text-zinc-500 text-xs font-bold uppercase tracking-wider pt-2">{c.label}</h2>

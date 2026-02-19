@@ -29,7 +29,7 @@ interface HighlightState {
 function App() {
   const {
     isOpen, setOpen, setContainerData, moveItem, containers, updateContainerWeight,
-    equipment, setEquipment, equipItem, unequipItem, swapEquipment, toggleItemFold, setContainers,
+    equipment, setEquipment, equipItem, unequipItem, swapEquipment, loadMagazine, loadAmmoIntoMag, toggleItemFold, setContainers,
     openWindows, closeWindow, detailsWindows, closeDetails
   } = useInventoryStore();
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -40,6 +40,9 @@ function App() {
 
   // Keep track of the current drag state so we can re-verify on rotation change
   const currentDragState = useRef<{ overId: string; activeRect: any } | null>(null);
+
+  // Cache Item Definitions to support partial updates
+  const itemDefsRef = useRef<Record<string, any>>({});
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -66,22 +69,28 @@ function App() {
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       const { action, data } = event.data;
-      console.log('NUI Message:', action, data);
+      // console.log('NUI Message:', action, data);
 
-      if (action === 'open') {
-        setOpen(true);
+      if (action === 'open' || action === 'update') {
         if (data) {
-          console.log('Processing open data:', data);
-          const { itemDefs } = data;
+          const { itemDefs: incomingDefs, equipment: equipData } = data;
+
+          // Update Cache if provided
+          if (incomingDefs) {
+            itemDefsRef.current = incomingDefs;
+          }
+
+          const defs = itemDefsRef.current;
 
           const enrichItems = (items: any[]) => items.map(item => {
-            const def = itemDefs ? itemDefs[item.name] : {};
+            const def = defs[item.name] || {};
             return {
               ...def,
               ...item,
               size: def?.size || item.size || { x: 1, y: 1 },
               weight: def?.weight || item.weight || 0,
-              type: def?.type || item.type || 'generic'
+              type: def?.type || item.type || 'generic',
+              image: (def?.image || item.image) ? `items/${def?.image || item.image}` : undefined
             };
           });
 
@@ -89,7 +98,7 @@ function App() {
           const newContainers: Record<string, any> = {};
 
           Object.entries(data).forEach(([key, value]: [string, any]) => {
-            if (key === 'itemDefs') return;
+            if (key === 'itemDefs' || key === 'equipment') return;
             if (typeof value === 'object' && value !== null && value.items) {
               const enriched = { ...value, items: enrichItems(value.items) };
               newContainers[enriched.id] = enriched;
@@ -98,28 +107,32 @@ function App() {
 
           setContainers(newContainers);
 
-          if (data.equipment) {
-            // Enrich equipment items individually
-            const enrichedEquipment: Record<string, any> = {};
-            Object.entries(data.equipment).forEach(([key, item]: [string, any]) => {
+          // Update Equipment if provided
+          if (equipData) {
+            const enrichedEquip: any = {};
+            Object.entries(equipData).forEach(([slot, item]: [string, any]) => {
               if (item) {
-                // Enrich single item
-                const def = itemDefs ? itemDefs[item.name] : {};
-                enrichedEquipment[key] = {
+                const def = defs[item.name] || {};
+                enrichedEquip[slot] = {
                   ...def,
                   ...item,
-                  size: def?.size || item.size || { x: 1, y: 1 },
-                  weight: def?.weight || item.weight || 0,
-                  type: def?.type || item.type || 'generic'
+                  image: (def?.image || item.image) ? `items/${def?.image || item.image}` : undefined
                 };
               } else {
-                enrichedEquipment[key] = null;
+                enrichedEquip[slot] = null;
               }
             });
-            setEquipment(enrichedEquipment);
+            setEquipment(enrichedEquip);
           }
         }
-      } else if (action === 'close') {
+      }
+
+      if (action === 'open') {
+        setOpen(true);
+      }
+
+
+      if (action === 'close') {
         setOpen(false);
       } else if (action === 'updateWeights') {
         const weights = data as WeightUpdate;
@@ -360,9 +373,9 @@ function App() {
       return;
     }
 
-    let activeItem: any = Object.values(containers).flatMap((c: any) => c.items).find((i: any) => i.name === activeId);
+    let activeItem: any = Object.values(containers).flatMap((c: any) => c.items).find((i: any) => i.id === activeId);
     if (!activeItem) {
-      activeItem = Object.values(equipment).find(i => i?.name === activeId);
+      activeItem = Object.values(equipment).find(i => i?.id === activeId);
     }
 
     if (!activeItem) return;
@@ -434,7 +447,7 @@ function App() {
     if (!over) return;
 
 
-    const itemName = active.id as string;
+    const itemId = active.id as string;
 
     // Find Item & Source
     let fromContainerId = '';
@@ -442,7 +455,7 @@ function App() {
 
     // Check containers
     for (const c of Object.values(containers)) {
-      const found = c.items.find(i => i.name === itemName);
+      const found = c.items.find(i => i.id === itemId);
       if (found) {
         fromContainerId = c.id;
         item = found;
@@ -453,7 +466,7 @@ function App() {
     // Check equipment if not in container
     if (!item) {
       for (const [slot, equipItem] of Object.entries(equipment)) {
-        if (equipItem?.name === itemName) {
+        if (equipItem?.id === itemId) {
           fromContainerId = `equip-${slot}`; // Special ID for equipment source
           item = equipItem;
           break;
@@ -470,10 +483,31 @@ function App() {
       const targetSlotId = toId.replace('equip-', '');
       const acceptedTypes = over.data.current?.acceptedTypes as string[] || [];
 
-      // Validate Type
-      if (acceptedTypes.length > 0 && item.type && !acceptedTypes.includes(item.type)) {
-        // Check if item type matches any of the accepted types
-        // If not compatible, return early
+      // Validate Type (skip for magazines — they have special handling)
+      const isMagazine = item.type === 'magazine';
+      if (!isMagazine && acceptedTypes.length > 0 && item.type && !acceptedTypes.includes(item.type)) {
+        return;
+      }
+
+      // --- MAGAZINE → WEAPON SLOT ---
+      if (isMagazine && !fromContainerId.startsWith('equip-')) {
+        // Dragging a magazine from inventory onto a weapon equipment slot
+        const weapon = equipment[targetSlotId];
+        if (!weapon || !weapon.type?.startsWith('weapon_')) return; // Must be a weapon slot with a weapon
+
+        // Caliber validation (check via metadata on the items)
+        const magCaliber = item.metadata?.caliber;
+        // We don't have caliber on the weapon item directly in metadata,
+        // but the server will validate. Frontend does best-effort.
+        if (!magCaliber) return;
+
+        loadMagazine(targetSlotId, item, fromContainerId);
+        fetchNui('loadMagazine', {
+          id: item.id,
+          magazine: item.name,
+          weaponSlot: targetSlotId,
+          from: fromContainerId
+        });
         return;
       }
 
@@ -484,7 +518,8 @@ function App() {
         if (fromSlotId === targetSlotId) return; // Same slot, no-op
         swapEquipment(fromSlotId, targetSlotId);
         fetchNui('swapEquipment', {
-          item: itemName,
+          item: item.name,
+          id: item.id,
           fromSlot: fromSlotId,
           toSlot: targetSlotId
         });
@@ -492,7 +527,8 @@ function App() {
         // Moving from Container to Equip
         equipItem(targetSlotId, item, fromContainerId);
         fetchNui('equipItem', {
-          item: itemName,
+          item: item.name,
+          id: item.id,
           slot: targetSlotId,
           from: fromContainerId
         });
@@ -523,6 +559,37 @@ function App() {
     const relSlotX = Math.max(1, Math.round(relativeX / (SLOT_SIZE + GAP)) + 1);
     const relSlotY = Math.max(1, Math.round(relativeY / (SLOT_SIZE + GAP)) + 1);
 
+    // --- AMMO -> MAGAZINE LOGIC ---
+    if (item.type === 'ammo' && containers[baseId]) {
+      const targetContainer = containers[baseId];
+      // Find item occupying the target slot
+      const targetItem = targetContainer.items.find((i: any) => {
+        const iX = i.slot.x;
+        const iY = i.slot.y;
+        const iW = i.size?.x || 1;
+        const iH = i.size?.y || 1;
+        return relSlotX >= iX && relSlotX < iX + iW &&
+          relSlotY >= iY && relSlotY < iY + iH;
+      });
+
+      if (targetItem && targetItem.type === 'magazine') {
+        const ammoCaliber = item.ammo?.caliber || item.metadata?.caliber;
+        const magCaliber = targetItem.magazine?.caliber || targetItem.metadata?.caliber;
+
+        if (ammoCaliber && magCaliber && ammoCaliber === magCaliber) {
+          loadAmmoIntoMag(targetItem.id, item, baseId, fromContainerId);
+          fetchNui('loadAmmoIntoMag', {
+            id: item.id,
+            magazineId: targetItem.id, // Use Magazine ID
+            ammoItem: item,
+            magazineContainer: baseId,
+            ammoContainer: fromContainerId
+          });
+          return;
+        }
+      }
+    }
+
     // Validate Placement BEFORE Moving
     const isValidPlacement = validatePlacement(toId, item, { x: relSlotX, y: relSlotY }, finalRotation);
 
@@ -541,17 +608,19 @@ function App() {
       unequipItem(sourceSlotId, baseId, { x: slotX, y: slotY });
 
       fetchNui('unequipItem', {
-        item: itemName,
+        item: item.name,
+        id: item.id,
         fromSlot: sourceSlotId,
         to: baseId,
         slot: { x: slotX, y: slotY }
       });
     } else {
       // Standard Move
-      moveItem(fromContainerId, baseId, itemName, { x: slotX, y: slotY }, finalRotation);
+      moveItem(fromContainerId, baseId, itemId, { x: slotX, y: slotY }, finalRotation);
 
       fetchNui('moveItem', {
-        item: itemName,
+        item: item.name,
+        id: item.id,
         from: fromContainerId,
         to: baseId,
         slot: { x: slotX, y: slotY },
@@ -568,9 +637,9 @@ function App() {
     let activeItem: any = null;
     if (activeContainerId) {
       if (containers[activeContainerId]) {
-        activeItem = containers[activeContainerId].items.find((i: any) => i.name === activeId);
+        activeItem = containers[activeContainerId].items.find((i: any) => i.id === activeId);
       } else {
-        activeItem = Object.values(equipment).find(i => i?.name === activeId);
+        activeItem = Object.values(equipment).find(i => i?.id === activeId);
       }
     }
 

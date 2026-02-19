@@ -140,7 +140,7 @@ export const Container: React.FC<ContainerProps> = ({ containerId, droppableId, 
                 {/* Items Layer - Adjust positioning relative to Region */}
                 <div className="absolute top-0 left-0 w-full h-full pointer-events-none">
                     <div className="relative pointer-events-auto">
-                        {visibleItems.map((item, index) => {
+                        {visibleItems.map((item) => {
                             // Correct position if rendering a region
                             // If region starts at x=1, y=3.
                             // And item is at x=1, y=3. 
@@ -161,7 +161,7 @@ export const Container: React.FC<ContainerProps> = ({ containerId, droppableId, 
 
                             return (
                                 <Item
-                                    key={`${item.name}-${index}`}
+                                    key={item.id}
                                     {...visualItem}
                                     containerId={containerId}
                                 />

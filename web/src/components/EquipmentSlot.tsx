@@ -47,11 +47,17 @@ export const EquipmentSlot: React.FC<EquipmentSlotProps> = ({
                     <Item
                         {...item}
                         isEquipment
-                        containerId={`equip-${slotId}`} // Pass ID for context actions
+                        containerId={`equip-${slotId}`}
                     />
                 ) : (
                     <div className="text-text-subtle text-xs text-center p-2 opacity-50 select-none">
                         EMPTY
+                    </div>
+                )}
+                {/* Ammo Count Overlay */}
+                {item?.metadata?.magazine && (
+                    <div className="absolute bottom-0.5 right-1 bg-black/70 text-xs text-amber-400 font-mono px-1 rounded pointer-events-none z-10">
+                        {item.metadata.magazine.ammo}/{item.metadata.magazine.capacity}
                     </div>
                 )}
                 {children}

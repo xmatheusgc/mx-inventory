@@ -12,6 +12,7 @@ const SLOT_SIZE = 62;
 const GAP = 0; // px
 
 interface ItemProps {
+    id: string; // UUID
     name: string;
     count: number;
     label?: string;
@@ -27,6 +28,18 @@ interface ItemProps {
     description?: string;
     weight?: number;
     folded?: boolean;
+    metadata?: {
+        ammo?: number;
+        capacity?: number;
+        caliber?: string;
+        magazine?: {
+            name: string;
+            label: string;
+            ammo: number;
+            capacity: number;
+            caliber: string;
+        };
+    };
 }
 
 // Pure Presentational Component
@@ -40,7 +53,7 @@ export const ItemView: React.FC<ItemProps & {
     const {
         name, count, label, image, isDragging, isOverlay,
         style, listeners, attributes, innerRef, type, containerId, slot, originalSlot,
-        description, weight, size, rotated
+        description, weight, size, rotated, metadata
     } = props;
 
     const toggleWindow = useInventoryStore(state => state.toggleWindow);
@@ -82,7 +95,9 @@ export const ItemView: React.FC<ItemProps & {
     const handleContextMenu = (e: React.MouseEvent) => {
         e.preventDefault();
         e.stopPropagation();
-        if (isOverlay || isDragging || props.isEquipment) return;
+        if (isOverlay || isDragging) return;
+        // Allow context menu on equipment only if weapon has a magazine
+        if (props.isEquipment && !metadata?.magazine) return;
 
         setShowTooltip(false);
         setContextMenuPos({ x: e.clientX, y: e.clientY });
@@ -150,6 +165,22 @@ export const ItemView: React.FC<ItemProps & {
             case 'details':
                 console.log('Details:', payload);
                 break;
+            case 'ejectMagazine':
+                if (containerId) {
+                    fetchNui('unloadMagazine', {
+                        weaponSlot: containerId.replace('equip-', ''),
+                        to: 'player-inv',
+                        slot: { x: -1, y: -1 }
+                    });
+                    // Also update local store
+                    const store = useInventoryStore.getState();
+                    store.unloadMagazine(
+                        containerId.replace('equip-', ''),
+                        'player-inv',
+                        { x: -1, y: -1 }
+                    );
+                }
+                break;
         }
         setShowContextMenu(false);
     };
@@ -192,6 +223,12 @@ export const ItemView: React.FC<ItemProps & {
         contextOptions.push({ label: 'Dobrar', action: () => handleAction('fold') });
     }
 
+    // [Equipped Weapon with Magazine] — Eject Magazine
+    if (props.isEquipment && metadata?.magazine) {
+        contextOptions.length = 0; // Clear non-equipment options
+        contextOptions.push({ label: `Ejetar ${metadata.magazine.label} (${metadata.magazine.ammo}/${metadata.magazine.capacity})`, action: () => handleAction('ejectMagazine') });
+    }
+
 
     return (
         <>
@@ -219,6 +256,12 @@ export const ItemView: React.FC<ItemProps & {
                 {count > 1 && (
                     <span className="absolute bottom-0 right-0 p-0.5 text-[0.6rem] font-bold bg-black/50 text-white pointer-events-none">
                         {count}
+                    </span>
+                )}
+                {/* Magazine ammo count display */}
+                {type === 'magazine' && metadata?.ammo !== undefined && (
+                    <span className="absolute bottom-0 left-0 p-0.5 text-[0.6rem] font-bold bg-amber-900/70 text-amber-300 pointer-events-none">
+                        {metadata.ammo}/{metadata.capacity}
                     </span>
                 )}
             </div>
@@ -249,11 +292,11 @@ export const ItemView: React.FC<ItemProps & {
 
 // Connected Component
 export const Item: React.FC<ItemProps & { containerId?: string }> = (props) => {
-    const { name, size, slot, rotated, isEquipment, containerId } = props;
+    const { id, name, size, slot, rotated, isEquipment, containerId } = props; // Destructure ID
 
     const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
-        id: name,
-        data: { name, size, slot, rotated, containerId },
+        id: id, // Use UUID instead of name
+        data: { id, name, size, slot, rotated, containerId },
     });
 
     const currentSize = (rotated) ? { x: size?.y || 1, y: size?.x || 1 } : (size || { x: 1, y: 1 });

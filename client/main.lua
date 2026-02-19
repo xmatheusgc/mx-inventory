@@ -10,6 +10,7 @@ end, false)
 
 RegisterKeyMapping('inventory', 'Open Inventory', 'keyboard', 'TAB')
 
+local lastAmmoCache = {}
 local currentClone = nil
 local rotationOffset = 0.0
 local screenPosition = { x = 0.2, y = 0.5 } -- Default
@@ -105,6 +106,14 @@ RegisterNetEvent('mx-inv:client:openInventory', function(data)
             Wait(1000) -- Check every second is usually enough for idle cam reset
         end
     end)
+end)
+
+RegisterNetEvent('mx-inv:client:updateInventory', function(data)
+    if not isInventoryOpen then return end
+    SendNUIMessage({
+        action = 'update',
+        data = data
+    })
 end)
 
 function CloseInventory()
@@ -284,11 +293,142 @@ end)
 -- Handle Swap Equipment (From NUI)
 RegisterNUICallback('swapEquipment', function(data, cb)
     print('[mx-inv] Debug Client: Requesting Swap Equipment: ' ..
-    data.item .. ' from ' .. data.fromSlot .. ' to ' .. data.toSlot)
+        data.item .. ' from ' .. data.fromSlot .. ' to ' .. data.toSlot)
     TriggerServerEvent('mx-inv:server:swapEquipment', {
         item = data.item,
         fromSlot = data.fromSlot,
         toSlot = data.toSlot
     })
     cb('ok')
+end)
+
+-- Handle Load Magazine into Weapon (From NUI)
+RegisterNUICallback('loadMagazine', function(data, cb)
+    print('[mx-inv] Debug Client: Loading Magazine: ' .. data.magazine .. ' into ' .. data.weaponSlot)
+    TriggerServerEvent('mx-inv:server:loadMagazine', {
+        magazine = data.magazine,
+        weaponSlot = data.weaponSlot,
+        from = data.from
+    })
+    cb('ok')
+end)
+
+-- Handle Unload Magazine from Weapon (From NUI)
+RegisterNUICallback('unloadMagazine', function(data, cb)
+    print('[mx-inv] Debug Client: Unloading Magazine from ' .. data.weaponSlot)
+    TriggerServerEvent('mx-inv:server:unloadMagazine', {
+        weaponSlot = data.weaponSlot,
+        to = data.to,
+        slot = data.slot
+    })
+    cb('ok')
+end)
+
+-- Handle Load Ammo into Magazine (From NUI)
+RegisterNUICallback('loadAmmoIntoMag', function(data, cb)
+    print('[mx-inv] Debug Client: Loading Ammo into Mag')
+    TriggerServerEvent('mx-inv:server:loadAmmoIntoMag', {
+        id = data.id,
+        magazineId = data.magazineId,
+        ammoItem = data.ammoItem,
+        magazineContainer = data.magazineContainer,
+        ammoContainer = data.ammoContainer
+    })
+    cb('ok')
+end)
+
+-- Handle Unload Item (Ammo from Mag)
+RegisterNUICallback('unloadItem', function(data, cb)
+    TriggerServerEvent('mx-inv:server:unloadItem', data)
+    cb('ok')
+end)
+
+-- Set Ammo & Play Reload Animation (Native Feel)
+RegisterNetEvent('mx-inv:client:setAmmoAndReload', function(weaponHashName, ammoCount)
+    local ped = PlayerPedId()
+    local hash = (type(weaponHashName) == 'string') and GetHashKey(weaponHashName) or weaponHashName
+
+    print('[mx-inv] SetAmmoAndReload: weapon=' .. tostring(weaponHashName) .. ' ammo=' .. tostring(ammoCount))
+
+    -- Ensure player has the weapon
+    if not HasPedGotWeapon(ped, hash, false) then
+        return
+    end
+
+    -- Check if player is HOLDING this weapon
+    local selectedWeapon = GetSelectedPedWeapon(ped)
+    if selectedWeapon ~= hash then
+        -- Just set ammo without animation
+        SetPedAmmo(ped, hash, ammoCount)
+        return
+    end
+
+    -- Set the ammo count
+    SetPedAmmo(ped, hash, ammoCount)
+    lastAmmoCache[hash] = ammoCount
+
+    -- Trigger native reload animation
+    -- Logic: Ensure weapon is ready to reload
+    if ammoCount > 0 then
+        -- Force reload task
+        MakePedReload(ped)
+        -- ClearTask(ped) ? No.
+    end
+end)
+
+-- Manual Reload Loop (Disable Auto-Reload + R key)
+Citizen.CreateThread(function()
+    while true do
+        Citizen.Wait(0)
+        local ped = PlayerPedId()
+        if IsPedArmed(ped, 4) then
+            -- Disable Auto Reload
+            SetPedConfigFlag(ped, 184, true) -- CPED_CONFIG_FLAG_PreventAutoReload
+
+            -- Disable Native R (Melee/Reload) to prevent pistol whipping
+            DisableControlAction(0, 45, true)
+            DisableControlAction(0, 140, true) -- Melee Light
+
+            -- Detect R press
+            if IsDisabledControlJustPressed(0, 45) then -- INPUT_RELOAD
+                local _, hash = GetCurrentPedWeapon(ped)
+                TriggerServerEvent('mx-inv:server:reloadWeapon', hash)
+            end
+        end
+    end
+end)
+
+-- Ammo Sync Loop
+Citizen.CreateThread(function()
+    while true do
+        Citizen.Wait(1000) -- Check every second
+        local ped = PlayerPedId()
+        if DoesEntityExist(ped) and not IsEntityDead(ped) then
+            local selectedWeapon = GetSelectedPedWeapon(ped)
+            if selectedWeapon ~= GetHashKey("WEAPON_UNARMED") then
+                local currentAmmo = GetAmmoInPedWeapon(ped, selectedWeapon)
+
+                -- Initialize cache if nil
+                if lastAmmoCache[selectedWeapon] == nil then
+                    lastAmmoCache[selectedWeapon] = currentAmmo
+                end
+
+                -- Sync if changed
+                if lastAmmoCache[selectedWeapon] ~= currentAmmo then
+                    TriggerServerEvent('mx-inv:server:updateAmmo', selectedWeapon, currentAmmo)
+                    lastAmmoCache[selectedWeapon] = currentAmmo
+                end
+            end
+        end
+    end
+end)
+
+AddEventHandler('onResourceStop', function(resourceName)
+    if (GetCurrentResourceName() ~= resourceName) then
+        return
+    end
+    print('[mx-inv] Resource stopping. Cleaning up UI and Peds.')
+    CloseInventory()
+    -- Ensure NUI focus is released (CloseInventory does it, but double check)
+    SetNuiFocus(false, false)
 end)
