@@ -100,10 +100,18 @@ export const EquipmentPanel: React.FC = () => {
             </div>
             <div className="flex justify-start w-full bg-black/60 p-1">
                 <div className="flex justify-between w-full px-12 bg-black/40 p-6">
-                    <span className="flex items-center gap-1 text-success "><HeartPulse /> 0/0</span>
-                    <span className="flex items-center gap-1 text-yellow-500"><Zap /> 0/0</span>
-                    <span className="flex items-center gap-1 text-blue-500"><Droplets /> 0/0</span>
-                    <span className="flex items-center gap-1 text-text-subtle"><Weight /> 0,0Kg</span>
+                    <span className="flex items-center gap-1 text-[#82BE64] font-medium">
+                        <HeartPulse /> 0<span className='text-[#C2C2C0]'>/0</span>
+                    </span>
+                    <span className="flex items-center gap-1 text-[#EBBB5A] font-medium">
+                        <Zap /> 0<span className='text-[#C2C2C0]'>/0</span>
+                    </span>
+                    <span className="flex items-center gap-1 text-[#78B7FA] font-medium">
+                        <Droplets /> 0<span className='text-[#C2C2C0]'>/0</span>
+                    </span>
+                    <span className="flex items-center gap-1 text-[#8B918D] font-medium">
+                        <Weight /> 0,0Kg
+                    </span>
                 </div>
             </div>
         </div>

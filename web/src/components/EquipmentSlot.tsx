@@ -2,6 +2,7 @@ import React from 'react';
 import { useDroppable } from '@dnd-kit/core';
 import { Item } from './Item';
 import { useInventoryStore, type ItemType } from '../store/inventoryStore';
+import { ArrowDownToLine } from 'lucide-react';
 
 interface EquipmentSlotProps {
     slotId: string;
@@ -12,18 +13,21 @@ interface EquipmentSlotProps {
     children?: React.ReactNode;
 }
 
-export const EquipmentSlot: React.FC<EquipmentSlotProps> = ({
+export const EquipmentSlot: React.FC<EquipmentSlotProps> = React.memo(({
     slotId,
     label,
     acceptedTypes,
     className,
     children
 }) => {
-    const { equipment } = useInventoryStore();
-    const item = equipment[slotId];
+    const item = useInventoryStore(state => state.equipment[slotId]);
+    const dragCompat = useInventoryStore(state => state.dragCompatibility);
+
+    const droppableId = `equip-${slotId}`;
+    const isCompatibleTarget = dragCompat && dragCompat.targetIds.has(droppableId);
 
     const { setNodeRef, isOver } = useDroppable({
-        id: `equip-${slotId}`,
+        id: droppableId,
         data: {
             type: 'equipment',
             slotId,
@@ -37,8 +41,9 @@ export const EquipmentSlot: React.FC<EquipmentSlotProps> = ({
             <div
                 ref={setNodeRef}
                 className={`
-                    relative bg-surface-light/40 border border-border-dark/30 overflow-hidden flex items-center justify-center shrink-0
-                    ${isOver ? 'border-primary/80 bg-primary/10' : ''}
+                    relative bg-surface-light/40 border overflow-hidden flex items-center justify-center shrink-0
+                    ${isOver ? 'border-primary/80 bg-primary/10' : 'border-border-dark/30'}
+                    ${isCompatibleTarget ? 'ring-2 ring-green-400/80 border-green-400/60 shadow-[0_0_12px_rgba(74,222,128,0.3)]' : ''}
                     transition-colors duration-200
                     ${className}
                 `}
@@ -50,18 +55,19 @@ export const EquipmentSlot: React.FC<EquipmentSlotProps> = ({
                         containerId={`equip-${slotId}`}
                     />
                 ) : (
-                    <div className="text-text-subtle text-xs text-center p-2 opacity-50 select-none">
-                        EMPTY
-                    </div>
-                )}
-                {/* Ammo Count Overlay */}
-                {item?.metadata?.magazine && (
-                    <div className="absolute bottom-0.5 right-1 bg-black/70 text-xs text-amber-400 font-mono px-1 rounded pointer-events-none z-10">
-                        {item.metadata.magazine.ammo}/{item.metadata.magazine.capacity}
-                    </div>
+                    <>
+                        <div className="text-text-subtle text-xs text-center p-2 opacity-50 select-none">
+                            EMPTY
+                        </div>
+                        {isCompatibleTarget && (
+                            <div className="absolute inset-0 bg-green-500/15 flex items-center justify-center pointer-events-none animate-pulse">
+                                <ArrowDownToLine className="w-6 h-6 text-green-400 drop-shadow-lg" />
+                            </div>
+                        )}
+                    </>
                 )}
                 {children}
             </div>
         </div>
     );
-};
+});

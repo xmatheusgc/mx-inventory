@@ -28,16 +28,11 @@ export interface Item {
     };
     // Dynamic State
     metadata?: {
-        ammo?: number;           // For magazines: current ammo count
-        capacity?: number;       // For magazines: max capacity
-        caliber?: string;        // For magazines/ammo: caliber type
-        magazine?: {             // For equipped weapons: inserted magazine
-            name: string;        // Magazine item name
-            label: string;
-            ammo: number;        // Current ammo in magazine
-            capacity: number;    // Max capacity
-            caliber: string;
-        };
+        ammo?: number;           // Total ammo for weapons, or ammo for stacked items
+        clip?: number;           // Current clip ammo for equipped weapons
+        capacity?: number;       // (Legacy)
+        caliber?: string;        // Ammo caliber type
+        attachments?: Record<string, string | null>; // slot -> attachment item name (e.g. { muzzle: 'suppressor_pistol', scope: null })
     };
 }
 
@@ -75,12 +70,16 @@ interface InventoryState {
     rotateItem: (containerId: string, itemName: string) => void;
     updateContainerWeight: (containerId: string, weight: number) => void;
     equipItem: (slot: string, item: Item, fromContainerId: string) => void;
-    unequipItem: (slot: string, toContainerId: string, targetSlot: { x: number, y: number }) => void;
+    unequipItem: (slot: string, toContainerId: string, targetSlot: { x: number, y: number }, folded?: boolean) => void;
     swapEquipment: (fromSlot: string, toSlot: string) => void;
-    loadMagazine: (weaponSlot: string, magazineItem: Item, fromContainerId: string) => void;
-    unloadMagazine: (weaponSlot: string, toContainerId: string, targetSlot: { x: number; y: number }) => void;
-    loadAmmoIntoMag: (magazineId: string, ammoItem: Item, magazineContainerId: string, ammoContainerId: string) => void;
+    loadAmmoIntoWeapon: (weaponIdOrSlot: string, weaponContainerId: string, ammoItem: Item, ammoContainerId: string) => void;
+    updateWeaponAmmo: (weaponSlot: string, totalAmmo: number, clipAmmo: number) => void;
     toggleItemFold: (containerId: string, itemName: string) => void;
+    stackItems: (fromItemId: string, fromContainerId: string, toItemId: string, toContainerId: string) => void;
+
+    // Attachment Actions
+    attachToWeapon: (weaponId: string, weaponContainerId: string, attachmentSlot: string, attachmentItem: Item, fromContainerId: string) => void;
+    removeAttachment: (weaponId: string, weaponContainerId: string, attachmentSlot: string, toContainerId: string, targetSlot?: { x: number; y: number }) => void;
 
     // UI Actions
     openWindows: string[];
@@ -98,15 +97,13 @@ interface InventoryState {
     setHoveredItem: (data: { name: string, containerId: string } | null) => void;
     setShortcut: (key: string) => void;
     removeShortcut: (key: string) => void;
+
+    // Drag Compatibility Highlights
+    dragCompatibility: { targetIds: Set<string>; dragType: 'ammo' | 'attachment' | 'stack' | null } | null;
+    setDragCompatibility: (data: { targetIds: Set<string>; dragType: 'ammo' | 'attachment' | 'stack' } | null) => void;
 }
 
-// Helper
-const generateUUID = () => {
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
-        var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
-        return v.toString(16);
-    });
-};
+// No helpers needed currently
 
 export const useInventoryStore = create<InventoryState>((set) => ({
     isOpen: false,
@@ -151,6 +148,10 @@ export const useInventoryStore = create<InventoryState>((set) => ({
     shortcuts: { '5': null, '6': null, '7': null, '8': null },
     hoveredItem: null,
     setHoveredItem: (data) => set({ hoveredItem: data }),
+
+    // Drag Compatibility Highlights
+    dragCompatibility: null,
+    setDragCompatibility: (data) => set({ dragCompatibility: data }),
     setShortcut: (key: string) => {
         set((state) => {
             if (!state.hoveredItem) return state;
@@ -367,7 +368,8 @@ export const useInventoryStore = create<InventoryState>((set) => ({
         };
     }),
 
-    unequipItem: (slot: string, toContainerId: string, targetSlot: { x: number, y: number }) => set((state: InventoryState) => {
+    unequipItem: (slot: string, toContainerId: string, targetSlot: { x: number, y: number }, folded?: boolean) => set((state: InventoryState) => {
+        console.log(`[mx-inv] STORE ACTION > unequipItem: From slot ${slot} to container ${toContainerId} at X:${targetSlot.x} Y:${targetSlot.y}`);
         const item = state.equipment[slot];
         if (!item) return state;
 
@@ -377,11 +379,14 @@ export const useInventoryStore = create<InventoryState>((set) => ({
         // Remove from equipment
         const newEquipment = { ...state.equipment, [slot]: null };
 
-        // Restore Size (Expanded)
-        let newItem = { ...item, slot: targetSlot, rotated: false, folded: false };
+        // Resolve size based on fold state:
+        // If explicitly folded (e.g. folded during drag), use foldedSize.
+        // If unknown, default to expanded (equip always equips expanded).
+        const isFolded = folded ?? false;
         const config = ITEM_CONFIGS[item.name];
+        let newItem = { ...item, slot: targetSlot, rotated: false, folded: isFolded };
         if (config) {
-            newItem.size = config.expandedSize;
+            newItem.size = isFolded ? config.foldedSize : config.expandedSize;
         }
 
         // Add to target container
@@ -411,174 +416,97 @@ export const useInventoryStore = create<InventoryState>((set) => ({
         };
     }),
 
-    loadMagazine: (weaponSlot: string, magazineItem: Item, fromContainerId: string) => set((state: InventoryState) => {
-        const weapon = state.equipment[weaponSlot];
+    loadAmmoIntoWeapon: (weaponIdOrSlot: string, weaponContainerId: string, ammoItem: Item, ammoContainerId: string) => set((state: InventoryState) => {
+        let weapon: Item | null | undefined;
+
+        const isEquipment = weaponContainerId.startsWith('equip-');
+        const equipSlot = isEquipment ? weaponContainerId.replace('equip-', '') : null;
+
+        if (isEquipment && equipSlot) {
+            weapon = state.equipment[equipSlot];
+        } else {
+            const weaponContainer = state.containers[weaponContainerId];
+            if (weaponContainer) {
+                weapon = weaponContainer.items.find(i => i.id === weaponIdOrSlot);
+            }
+        }
+
         if (!weapon) return state;
 
-        const sourceContainer = state.containers[fromContainerId];
-        if (!sourceContainer) return state;
-
-        // Remove magazine from source container
-        const newSourceItems = sourceContainer.items.filter((i: Item) => i.id !== magazineItem.id);
-
-        // Attach magazine to weapon metadata
-        const magazineMeta = {
-            name: magazineItem.name,
-            label: magazineItem.label || magazineItem.name,
-            ammo: magazineItem.metadata?.ammo ?? 0,
-            capacity: magazineItem.metadata?.capacity ?? 30,
-            caliber: magazineItem.metadata?.caliber ?? '',
-        };
-
-        const updatedWeapon = {
-            ...weapon,
-            metadata: {
-                ...weapon.metadata,
-                magazine: magazineMeta,
-            }
-        };
-
-        return {
-            containers: {
-                ...state.containers,
-                [fromContainerId]: { ...sourceContainer, items: newSourceItems }
-            },
-            equipment: {
-                ...state.equipment,
-                [weaponSlot]: updatedWeapon
-            }
-        };
-    }),
-
-    unloadMagazine: (weaponSlot: string, toContainerId: string, targetSlot: { x: number; y: number }) => set((state: InventoryState) => {
-        const weapon = state.equipment[weaponSlot];
-        if (!weapon || !weapon.metadata?.magazine) return state;
-
-        const targetContainer = state.containers[toContainerId];
-        if (!targetContainer) return state;
-
-        const mag = weapon.metadata.magazine;
-
-        // Create magazine item to put back in inventory
-        const magazineItem: Item = {
-            id: generateUUID(), // Generate Client ID
-            name: mag.name,
-            label: mag.label,
-            count: 1,
-            slot: targetSlot,
-            size: { x: 1, y: 2 }, // Default magazine size
-            type: 'magazine',
-            metadata: {
-                ammo: mag.ammo,
-                capacity: mag.capacity,
-                caliber: mag.caliber,
-            }
-        };
-
-        // Remove magazine from weapon
-        const updatedWeapon = {
-            ...weapon,
-            metadata: {
-                ...weapon.metadata,
-                magazine: undefined,
-            }
-        };
-
-        return {
-            containers: {
-                ...state.containers,
-                [toContainerId]: {
-                    ...targetContainer,
-                    items: [...targetContainer.items, magazineItem]
-                }
-            },
-            equipment: {
-                ...state.equipment,
-                [weaponSlot]: updatedWeapon
-            }
-        };
-    }),
-
-    loadAmmoIntoMag: (magazineId: string, ammoItem: Item, magazineContainerId: string, ammoContainerId: string) => set((state: InventoryState) => {
-        const magContainer = state.containers[magazineContainerId];
         const ammoContainer = state.containers[ammoContainerId];
-        if (!magContainer || !ammoContainer) return state;
+        if (!ammoContainer) return state;
 
-        // Find Magazine
-        const magItemIndex = magContainer.items.findIndex(i => i.id === magazineId);
-        if (magItemIndex === -1) return state;
-        const magItem = magContainer.items[magItemIndex];
+        const MAX_AMMO = 150;
+        const currentTotalAmmo = weapon.metadata?.ammo ?? 0;
+        const space = MAX_AMMO - currentTotalAmmo;
 
-        // Validate Caliber
-        const ammoCaliber = ammoItem.ammo?.caliber || ammoItem.metadata?.caliber;
-        const magCaliber = magItem.magazine?.caliber || magItem.metadata?.caliber;
-
-        if (!ammoCaliber || !magCaliber || ammoCaliber !== magCaliber) return state;
-
-        // Calculate amount to move
-        // Default capacity from Item Def or Metadata
-        const capacity = magItem.metadata?.capacity || magItem.magazine?.capacity || 30;
-        const currentAmmo = magItem.metadata?.ammo || 0;
-        const space = capacity - currentAmmo;
-
-        if (space <= 0) return state; // Full
+        if (space <= 0) return state;
 
         const amountToLoad = Math.min(space, ammoItem.count);
 
-        // Update Magazine
-        const newMagItem = {
-            ...magItem,
+        const updatedWeapon = {
+            ...weapon,
             metadata: {
-                ...magItem.metadata,
-                ammo: currentAmmo + amountToLoad,
-                capacity: capacity,
-                caliber: magCaliber
+                ...weapon.metadata,
+                ammo: currentTotalAmmo + amountToLoad
+                // we don't optimistically update clip here, because ped reload handles it
             }
         };
 
-        // Update Ammo Stack
-        let newAmmoItems;
-        if (ammoContainerId === magazineContainerId) {
-            // Same container
-            newAmmoItems = magContainer.items.map(i => {
-                if (i.id === magItem.id) return newMagItem;
-                if (i.id === ammoItem.id) {
-                    return { ...i, count: i.count - amountToLoad };
-                }
-                return i;
-            }).filter(i => i.count > 0);
+        const updatedAmmoCount = ammoItem.count - amountToLoad;
+        const newAmmoItems = ammoContainer.items.map(i => {
+            if (i.id === ammoItem.id) return { ...i, count: updatedAmmoCount };
+            return i;
+        }).filter(i => i.count > 0);
 
+        if (isEquipment && equipSlot) {
             return {
                 containers: {
                     ...state.containers,
-                    [magazineContainerId]: { ...magContainer, items: newAmmoItems }
+                    [ammoContainerId]: { ...ammoContainer, items: newAmmoItems }
+                },
+                equipment: {
+                    ...state.equipment,
+                    [equipSlot]: updatedWeapon
                 }
             };
         } else {
-            // Different containers
-            const newMagItems = magContainer.items.map(i => i.id === magazineId ? newMagItem : i);
-            const newAmmoSourceItems = ammoContainer.items.map(i => {
-                if (i.id === ammoItem.id) {
-                    return { ...i, count: i.count - amountToLoad };
-                }
-                return i;
-            }).filter(i => i.count > 0);
-
+            const weaponContainer = state.containers[weaponContainerId];
+            const newWeaponItems = weaponContainer.items.map(i => i.id === weaponIdOrSlot ? updatedWeapon : i);
             return {
                 containers: {
                     ...state.containers,
-                    [magazineContainerId]: { ...magContainer, items: newMagItems },
-                    [ammoContainerId]: { ...ammoContainer, items: newAmmoSourceItems }
+                    [ammoContainerId]: { ...ammoContainer, items: newAmmoItems },
+                    [weaponContainerId]: { ...weaponContainer, items: newWeaponItems }
                 }
             };
         }
     }),
 
-    toggleItemFold: (containerId: string, itemName: string) => set((state: InventoryState) => {
+    updateWeaponAmmo: (weaponSlot: string, totalAmmo: number, clipAmmo: number) => set((state: InventoryState) => {
+        const weapon = state.equipment[weaponSlot];
+        if (!weapon) return state;
+
+        return {
+            equipment: {
+                ...state.equipment,
+                [weaponSlot]: {
+                    ...weapon,
+                    metadata: {
+                        ...weapon.metadata,
+                        ammo: totalAmmo,
+                        clip: clipAmmo
+                    }
+                }
+            }
+        };
+    }),
+
+    toggleItemFold: (containerId: string, itemId: string) => set((state: InventoryState) => {
         // 1. Check Containers
         if (state.containers[containerId]) {
             const container = state.containers[containerId];
-            const itemIndex = container.items.findIndex((i: Item) => i.name === itemName);
+            const itemIndex = container.items.findIndex((i: Item) => i.id === itemId);
             if (itemIndex === -1) return state;
 
             const item = container.items[itemIndex];
@@ -619,7 +547,7 @@ export const useInventoryStore = create<InventoryState>((set) => ({
 
         let equipSlotFound: string | null = null;
         for (const [slot, item] of Object.entries(state.equipment)) {
-            if (item && item.name === itemName) {
+            if (item && item.id === itemId) {
                 equipSlotFound = slot;
                 break;
             }
@@ -655,5 +583,167 @@ export const useInventoryStore = create<InventoryState>((set) => ({
         }
 
         return state;
+    }),
+
+    // Stack Items Action
+    stackItems: (fromItemId: string, fromContainerId: string, toItemId: string, toContainerId: string) => set((state: InventoryState) => {
+        console.log(`[mx-inv] STORE > stackItems: ${fromItemId} (${fromContainerId}) -> ${toItemId} (${toContainerId})`);
+
+        const fromContainer = state.containers[fromContainerId];
+        const toContainer = state.containers[toContainerId];
+        if (!fromContainer || !toContainer) return state;
+
+        const fromItem = fromContainer.items.find(i => i.id === fromItemId);
+        const toItem = toContainer.items.find(i => i.id === toItemId);
+        if (!fromItem || !toItem) return state;
+        if (fromItem.name !== toItem.name) return state;
+
+        const maxStack = toItem.maxStack || 60;
+        const space = maxStack - toItem.count;
+        if (space <= 0) return state;
+
+        const toTransfer = Math.min(fromItem.count, space);
+        const newToCount = toItem.count + toTransfer;
+        const newFromCount = fromItem.count - toTransfer;
+
+        const newToItems = toContainer.items.map(i =>
+            i.id === toItemId ? { ...i, count: newToCount } : i
+        );
+
+        let newFromItems;
+        if (newFromCount <= 0) {
+            // Fully merged — remove source item
+            newFromItems = fromContainer.items.filter(i => i.id !== fromItemId);
+        } else {
+            newFromItems = fromContainer.items.map(i =>
+                i.id === fromItemId ? { ...i, count: newFromCount } : i
+            );
+        }
+
+        if (fromContainerId === toContainerId) {
+            // Same container — combine both changes
+            let combinedItems = toContainer.items.map(i => {
+                if (i.id === toItemId) return { ...i, count: newToCount };
+                if (i.id === fromItemId) return newFromCount <= 0 ? null : { ...i, count: newFromCount };
+                return i;
+            }).filter(Boolean) as Item[];
+
+            return {
+                containers: { ...state.containers, [toContainerId]: { ...toContainer, items: combinedItems } }
+            };
+        }
+
+        return {
+            containers: {
+                ...state.containers,
+                [fromContainerId]: { ...fromContainer, items: newFromItems },
+                [toContainerId]: { ...toContainer, items: newToItems }
+            }
+        };
+    }),
+
+    // Attachment Actions
+    attachToWeapon: (weaponId: string, weaponContainerId: string, attachmentSlot: string, attachmentItem: Item, fromContainerId: string) => set((state: InventoryState) => {
+        console.log(`[mx-inv] STORE > attachToWeapon: weapon=${weaponId} slot=${attachmentSlot} item=${attachmentItem.name} from=${fromContainerId}`);
+
+        // Find the weapon (could be in equipment or a container)
+        let weapon: Item | null = null;
+        let weaponLocation: 'equipment' | 'container' = 'container';
+        let equipSlotKey = '';
+
+        // Check equipment first
+        if (weaponContainerId.startsWith('equip-')) {
+            equipSlotKey = weaponContainerId.replace('equip-', '');
+            weapon = state.equipment[equipSlotKey] || null;
+            weaponLocation = 'equipment';
+        } else {
+            // Check containers
+            const container = state.containers[weaponContainerId];
+            if (container) {
+                weapon = container.items.find(i => i.id === weaponId) || null;
+            }
+        }
+
+        if (!weapon) return state;
+
+        // Remove attachment item from source container
+        const sourceContainer = state.containers[fromContainerId];
+        if (!sourceContainer) return state;
+        const newSourceItems = sourceContainer.items.filter(i => i.id !== attachmentItem.id);
+
+        // Update weapon metadata
+        const newAttachments = { ...(weapon.metadata?.attachments || {}), [attachmentSlot]: attachmentItem.name };
+        const updatedWeapon = {
+            ...weapon,
+            metadata: { ...weapon.metadata, attachments: newAttachments }
+        };
+
+        // Write updated weapon back
+        if (weaponLocation === 'equipment') {
+            return {
+                equipment: { ...state.equipment, [equipSlotKey]: updatedWeapon },
+                containers: { ...state.containers, [fromContainerId]: { ...sourceContainer, items: newSourceItems } }
+            };
+        } else {
+            const targetContainer = state.containers[weaponContainerId];
+            const newTargetItems = targetContainer.items.map(i => i.id === weaponId ? updatedWeapon : i);
+            return {
+                containers: {
+                    ...state.containers,
+                    [fromContainerId]: { ...sourceContainer, items: newSourceItems },
+                    [weaponContainerId]: { ...targetContainer, items: newTargetItems }
+                }
+            };
+        }
+    }),
+
+    removeAttachment: (weaponId: string, weaponContainerId: string, attachmentSlot: string, toContainerId: string, targetSlot?: { x: number; y: number }) => set((state: InventoryState) => {
+        console.log(`[mx-inv] STORE > removeAttachment: weapon=${weaponId} slot=${attachmentSlot} to=${toContainerId}`, targetSlot);
+
+        // Find the weapon
+        let weapon: Item | null = null;
+        let weaponLocation: 'equipment' | 'container' = 'container';
+        let equipSlotKey = '';
+
+        if (weaponContainerId.startsWith('equip-')) {
+            equipSlotKey = weaponContainerId.replace('equip-', '');
+            weapon = state.equipment[equipSlotKey] || null;
+            weaponLocation = 'equipment';
+        } else {
+            const container = state.containers[weaponContainerId];
+            if (container) {
+                weapon = container.items.find(i => i.id === weaponId) || null;
+            }
+        }
+
+        if (!weapon) return state;
+        const attachmentName = weapon.metadata?.attachments?.[attachmentSlot];
+        if (!attachmentName) return state;
+
+        // Remove from weapon metadata
+        const newAttachments = { ...(weapon.metadata?.attachments || {}) };
+        delete newAttachments[attachmentSlot];
+        const updatedWeapon = {
+            ...weapon,
+            metadata: { ...weapon.metadata, attachments: newAttachments }
+        };
+
+        // We don't add the item back to the frontend here - the server will handle that
+        // and send an UpdateClientInventory that refreshes everything.
+
+        if (weaponLocation === 'equipment') {
+            return {
+                equipment: { ...state.equipment, [equipSlotKey]: updatedWeapon }
+            };
+        } else {
+            const targetContainer = state.containers[weaponContainerId];
+            const newTargetItems = targetContainer.items.map(i => i.id === weaponId ? updatedWeapon : i);
+            return {
+                containers: {
+                    ...state.containers,
+                    [weaponContainerId]: { ...targetContainer, items: newTargetItems }
+                }
+            };
+        }
     })
 }));

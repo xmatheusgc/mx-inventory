@@ -6,9 +6,10 @@ import { ContextMenu } from './ContextMenu';
 import { QuantityModal } from './QuantityModal';
 import { fetchNui } from '../utils/nui';
 import { useInventoryStore } from '../store/inventoryStore';
+import { ArrowDownToLine } from 'lucide-react';
 
-// Constants for slot size (must match Grid)
-const SLOT_SIZE = 62;
+// Constants for slot size (must match Grid and App.tsx)
+const SLOT_SIZE = 64;
 const GAP = 0; // px
 
 interface ItemProps {
@@ -30,15 +31,9 @@ interface ItemProps {
     folded?: boolean;
     metadata?: {
         ammo?: number;
+        clip?: number;
         capacity?: number;
         caliber?: string;
-        magazine?: {
-            name: string;
-            label: string;
-            ammo: number;
-            capacity: number;
-            caliber: string;
-        };
     };
 }
 
@@ -49,7 +44,7 @@ export const ItemView: React.FC<ItemProps & {
     attributes?: any,
     innerRef?: (element: HTMLElement | null) => void,
     isOverlay?: boolean
-}> = (props) => {
+}> = React.memo((props) => {
     const {
         name, count, label, image, isDragging, isOverlay,
         style, listeners, attributes, innerRef, type, containerId, slot, originalSlot,
@@ -58,6 +53,10 @@ export const ItemView: React.FC<ItemProps & {
 
     const toggleWindow = useInventoryStore(state => state.toggleWindow);
     const openDetails = useInventoryStore(state => state.openDetails);
+    const dragCompat = useInventoryStore(state => state.dragCompatibility);
+
+    // Determine if THIS item is a compatible target
+    const isCompatibleTarget = dragCompat && !isDragging && !isOverlay && dragCompat.targetIds.has(props.id);
 
     const [showTooltip, setShowTooltip] = useState(false);
     const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
@@ -96,8 +95,6 @@ export const ItemView: React.FC<ItemProps & {
         e.preventDefault();
         e.stopPropagation();
         if (isOverlay || isDragging) return;
-        // Allow context menu on equipment only if weapon has a magazine
-        if (props.isEquipment && !metadata?.magazine) return;
 
         setShowTooltip(false);
         setContextMenuPos({ x: e.clientX, y: e.clientY });
@@ -117,8 +114,8 @@ export const ItemView: React.FC<ItemProps & {
         } else {
             // Other Items -> Open Details
             const itemData: any = { // Reconstruct item object for details
-                name, count, label, image, type, slot,
-                description, weight, size, rotated
+                id: props.id, name, count, label, image, type, slot,
+                description, weight, size, rotated, metadata: props.metadata
             };
             openDetails(itemData);
         }
@@ -138,8 +135,11 @@ export const ItemView: React.FC<ItemProps & {
     const handleAction = (action: string, qty: number = 1) => {
         const payload = {
             item: name,
+            id: props.id,
+            name: name,
             slot: originalSlot || slot, // Use Original Global Slot if available
             container: containerId,
+            containerId: containerId,
             amount: qty
         };
 
@@ -164,22 +164,6 @@ export const ItemView: React.FC<ItemProps & {
                 break;
             case 'details':
                 console.log('Details:', payload);
-                break;
-            case 'ejectMagazine':
-                if (containerId) {
-                    fetchNui('unloadMagazine', {
-                        weaponSlot: containerId.replace('equip-', ''),
-                        to: 'player-inv',
-                        slot: { x: -1, y: -1 }
-                    });
-                    // Also update local store
-                    const store = useInventoryStore.getState();
-                    store.unloadMagazine(
-                        containerId.replace('equip-', ''),
-                        'player-inv',
-                        { x: -1, y: -1 }
-                    );
-                }
                 break;
         }
         setShowContextMenu(false);
@@ -223,11 +207,7 @@ export const ItemView: React.FC<ItemProps & {
         contextOptions.push({ label: 'Dobrar', action: () => handleAction('fold') });
     }
 
-    // [Equipped Weapon with Magazine] — Eject Magazine
-    if (props.isEquipment && metadata?.magazine) {
-        contextOptions.length = 0; // Clear non-equipment options
-        contextOptions.push({ label: `Ejetar ${metadata.magazine.label} (${metadata.magazine.ammo}/${metadata.magazine.capacity})`, action: () => handleAction('ejectMagazine') });
-    }
+    // Eject magazine option is removed for traditional ammo.
 
 
     return (
@@ -239,7 +219,8 @@ export const ItemView: React.FC<ItemProps & {
                 className={twMerge(
                     "absolute bg-surface-light border border-border-light flex flex-col items-center justify-center select-none overflow-hidden transition-none shadow-lg hover:border-primary/50 group cursor-grab active:cursor-grabbing",
                     (isDragging || isOverlay) && "z-50 shadow-primary/20 scale-105 ring-2 ring-primary",
-                    isDragging && !isOverlay && "opacity-50" // Ghost item visible but transparent
+                    isDragging && !isOverlay && "opacity-50", // Ghost item visible but transparent
+                    isCompatibleTarget && "ring-2 ring-green-400/80 border-green-400/60 shadow-[0_0_12px_rgba(74,222,128,0.3)] z-20"
                 )}
                 style={style}
                 onMouseEnter={handleMouseEnter}
@@ -253,15 +234,21 @@ export const ItemView: React.FC<ItemProps & {
                 ) : (
                     <span className="text-xs text-center text-text-subtle px-1 pointer-events-none">{label || name}</span>
                 )}
+                {/* Compatible Target Overlay */}
+                {isCompatibleTarget && (
+                    <div className="absolute inset-0 bg-green-500/15 flex items-center justify-center pointer-events-none z-10 animate-pulse">
+                        <ArrowDownToLine className="w-5 h-5 text-green-400 drop-shadow-lg" />
+                    </div>
+                )}
                 {count > 1 && (
                     <span className="absolute bottom-0 right-0 p-0.5 text-[0.6rem] font-bold bg-black/50 text-white pointer-events-none">
                         {count}
                     </span>
                 )}
-                {/* Magazine ammo count display */}
-                {type === 'magazine' && metadata?.ammo !== undefined && (
-                    <span className="absolute bottom-0 left-0 p-0.5 text-[0.6rem] font-bold bg-amber-900/70 text-amber-300 pointer-events-none">
-                        {metadata.ammo}/{metadata.capacity}
+                {/* Ammo count display for weapons */}
+                {(metadata?.ammo !== undefined || metadata?.clip !== undefined) && type !== 'ammo' && type !== 'magazine' && (
+                    <span className="absolute bottom-0.5 right-1 bg-black/70 text-[0.65rem] text-amber-400 font-mono px-1 rounded pointer-events-none z-10">
+                        {Math.max(0, (metadata.ammo ?? 0) - (metadata.clip ?? 0))} / {metadata.clip ?? 0}
                     </span>
                 )}
             </div>
@@ -288,15 +275,15 @@ export const ItemView: React.FC<ItemProps & {
             />
         </>
     );
-};
+});
 
 // Connected Component
-export const Item: React.FC<ItemProps & { containerId?: string }> = (props) => {
-    const { id, name, size, slot, rotated, isEquipment, containerId } = props; // Destructure ID
+export const Item: React.FC<ItemProps & { containerId?: string }> = React.memo((props) => {
+    const { id, size, slot, rotated, isEquipment, containerId } = props;
 
     const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
         id: id, // Use UUID instead of name
-        data: { id, name, size, slot, rotated, containerId },
+        data: { ...props, containerId },
     });
 
     const currentSize = (rotated) ? { x: size?.y || 1, y: size?.x || 1 } : (size || { x: 1, y: 1 });
@@ -333,4 +320,4 @@ export const Item: React.FC<ItemProps & { containerId?: string }> = (props) => {
             style={style}
         />
     );
-};
+});

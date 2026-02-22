@@ -4,7 +4,7 @@ import { useInventoryStore } from '../store/inventoryStore';
 import { useDroppable } from '@dnd-kit/core';
 import { twMerge } from 'tailwind-merge';
 
-const SLOT_SIZE = 62;
+const SLOT_SIZE = 64;
 const GAP = 0;
 
 interface HighlightData {
@@ -27,7 +27,7 @@ interface ContainerProps {
     region?: Region; // Only render slots within this region
 }
 
-export const Container: React.FC<ContainerProps> = ({ containerId, droppableId, highlight, region }) => {
+export const Container: React.FC<ContainerProps> = React.memo(({ containerId, droppableId, highlight, region }) => {
     const { containers } = useInventoryStore();
     const container = containers[containerId];
 
@@ -175,4 +175,4 @@ export const Container: React.FC<ContainerProps> = ({ containerId, droppableId, 
             </div>
         </div>
     );
-};
+});

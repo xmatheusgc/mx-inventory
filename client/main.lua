@@ -1,7 +1,20 @@
 local isInventoryOpen = false
+local lastAmmoCache = {}
 
 RegisterCommand('inventory', function()
     if not isInventoryOpen then
+        local ped = PlayerPedId()
+        local selectedWeapon = GetSelectedPedWeapon(ped)
+        if selectedWeapon ~= GetHashKey("WEAPON_UNARMED") then
+            local currentTotalAmmo = GetAmmoInPedWeapon(ped, selectedWeapon)
+            local _, currentClipAmmo = GetAmmoInClip(ped, selectedWeapon)
+            local cacheKey = tostring(currentTotalAmmo) .. "_" .. tostring(currentClipAmmo)
+            if lastAmmoCache[selectedWeapon] ~= cacheKey then
+                TriggerServerEvent('mx-inv:server:updateAmmo', selectedWeapon, currentTotalAmmo, currentClipAmmo)
+                lastAmmoCache[selectedWeapon] = cacheKey
+            end
+        end
+
         TriggerServerEvent('mx-inv:server:openInventory')
     else
         CloseInventory()
@@ -10,7 +23,6 @@ end, false)
 
 RegisterKeyMapping('inventory', 'Open Inventory', 'keyboard', 'TAB')
 
-local lastAmmoCache = {}
 local currentClone = nil
 local rotationOffset = 0.0
 local screenPosition = { x = 0.2, y = 0.5 } -- Default
@@ -136,6 +148,11 @@ RegisterNUICallback('moveItem', function(data, cb)
     cb('ok')
 end)
 
+RegisterNUICallback('foldItem', function(data, cb)
+    TriggerServerEvent('mx-inv:server:foldItem', data)
+    cb('ok')
+end)
+
 RegisterCommand('openstash', function()
     if isInventoryOpen then
         CloseInventory()
@@ -202,14 +219,11 @@ Citizen.CreateThread(function()
 end)
 
 -- Update Equipment Visuals
-RegisterNetEvent('mx-inv:client:updateEquipment', function(itemName, isEquipping)
-    print('[mx-inv] Debug Equip: Updating ' .. tostring(itemName) .. ' | Equipping: ' .. tostring(isEquipping))
+RegisterNetEvent('mx-inv:client:updateEquipment', function(itemName, isEquipping, ammoToLoad, attachments)
+    print('[mx-inv] Debug Equip: Updating ' ..
+        tostring(itemName) .. ' | Equipping: ' .. tostring(isEquipping) .. ' | Ammo: ' .. tostring(ammoToLoad))
 
     local ped = PlayerPedId()
-    -- We need ItemDefs on client. It's in shared_scripts, so 'Items' global should be available?
-    -- checking client/main.lua... no ItemDefs defined locally.
-    -- data/items.lua defines 'Items' global.
-
     local def = Items[itemName]
     if not def then
         print('[mx-inv] Debug Equip: Item definition not found for ' .. tostring(itemName))
@@ -227,9 +241,24 @@ RegisterNetEvent('mx-inv:client:updateEquipment', function(itemName, isEquipping
         local hash = GetHashKey(eq.weaponHash)
         print('[mx-inv] Debug Equip: Weapon Hash: ' .. hash)
         if isEquipping then
-            GiveWeaponToPed(ped, hash, 0, false, false) -- Added, but NOT equipped immediately
-            -- SetCurrentPedWeapon(ped, hash, true) -- Removed force hold
-            -- if eq.ammoType...
+            GiveWeaponToPed(ped, hash, 0, false, false)
+            SetPedAmmo(ped, hash, ammoToLoad or 0)
+
+            -- Apply Attachments
+            if attachments then
+                for slot, attachName in pairs(attachments) do
+                    if attachName then
+                        local attachDef = Items[attachName]
+                        if attachDef and attachDef.attachment and attachDef.attachment.componentHash then
+                            local compHash = GetHashKey(attachDef.attachment.componentHash)
+                            if compHash ~= 0 then
+                                GiveWeaponComponentToPed(ped, hash, compHash)
+                                print('[mx-inv] Applied attachment: ' .. attachDef.attachment.componentHash)
+                            end
+                        end
+                    end
+                end
+            end
         else
             RemoveWeaponFromPed(ped, hash)
         end
@@ -285,7 +314,8 @@ RegisterNUICallback('unequipItem', function(data, cb)
         item = data.item,
         from = 'equip-' .. data.fromSlot,
         to = data.to,
-        slot = data.slot -- Target slot in inventory
+        slot = data.slot,    -- Target slot in inventory
+        folded = data.folded -- Forward fold state so server persists it correctly
     })
     cb('ok')
 end)
@@ -302,45 +332,111 @@ RegisterNUICallback('swapEquipment', function(data, cb)
     cb('ok')
 end)
 
--- Handle Load Magazine into Weapon (From NUI)
-RegisterNUICallback('loadMagazine', function(data, cb)
-    print('[mx-inv] Debug Client: Loading Magazine: ' .. data.magazine .. ' into ' .. data.weaponSlot)
-    TriggerServerEvent('mx-inv:server:loadMagazine', {
-        magazine = data.magazine,
-        weaponSlot = data.weaponSlot,
-        from = data.from
-    })
-    cb('ok')
-end)
-
--- Handle Unload Magazine from Weapon (From NUI)
-RegisterNUICallback('unloadMagazine', function(data, cb)
-    print('[mx-inv] Debug Client: Unloading Magazine from ' .. data.weaponSlot)
-    TriggerServerEvent('mx-inv:server:unloadMagazine', {
-        weaponSlot = data.weaponSlot,
-        to = data.to,
-        slot = data.slot
-    })
-    cb('ok')
-end)
-
--- Handle Load Ammo into Magazine (From NUI)
-RegisterNUICallback('loadAmmoIntoMag', function(data, cb)
-    print('[mx-inv] Debug Client: Loading Ammo into Mag')
-    TriggerServerEvent('mx-inv:server:loadAmmoIntoMag', {
+-- Handle Load Ammo into Weapon (From NUI)
+RegisterNUICallback('loadAmmoIntoWeapon', function(data, cb)
+    print('[mx-inv] Debug Client: Loading Ammo into Weapon: ' ..
+        tostring(data.ammoItem.name) .. ' into ' .. tostring(data.weaponSlot))
+    TriggerServerEvent('mx-inv:server:loadAmmoIntoWeapon', {
         id = data.id,
-        magazineId = data.magazineId,
         ammoItem = data.ammoItem,
-        magazineContainer = data.magazineContainer,
+        weaponSlot = data.weaponSlot,
+        weaponContainer = data.weaponContainer,
         ammoContainer = data.ammoContainer
     })
     cb('ok')
 end)
 
--- Handle Unload Item (Ammo from Mag)
-RegisterNUICallback('unloadItem', function(data, cb)
-    TriggerServerEvent('mx-inv:server:unloadItem', data)
+-- Handle Stack Items (Merge stackable items)
+RegisterNUICallback('stackItems', function(data, cb)
+    print('[mx-inv] Debug Client: Stacking items ' .. tostring(data.fromItemId) .. ' -> ' .. tostring(data.toItemId))
+    TriggerServerEvent('mx-inv:server:stackItems', {
+        fromItemId = data.fromItemId,
+        fromContainerId = data.fromContainerId,
+        toItemId = data.toItemId,
+        toContainerId = data.toContainerId
+    })
     cb('ok')
+end)
+
+-- Handle Unload Weapon (From NUI Context Menu)
+RegisterNUICallback('unloadItem', function(data, cb)
+    print('[mx-inv] Debug Client: Requesting Unload Item: ' ..
+        tostring(data.name) .. ' from container ' .. tostring(data.containerId))
+    TriggerServerEvent('mx-inv:server:unloadWeapon', {
+        id = data.id,
+        name = data.name,
+        containerId = data.containerId,
+        slot = data.slot
+    })
+    cb('ok')
+end)
+
+-- Handle Attach Item to Weapon (From NUI Drag-and-Drop)
+RegisterNUICallback('attachToWeapon', function(data, cb)
+    print('[mx-inv] Debug Client: Attaching ' ..
+        tostring(data.attachmentItem) ..
+        ' to weapon ' .. tostring(data.weaponId) .. ' slot ' .. tostring(data.attachmentSlot))
+    TriggerServerEvent('mx-inv:server:attachToWeapon', {
+        weaponId = data.weaponId,
+        weaponContainerId = data.weaponContainerId,
+        attachmentSlot = data.attachmentSlot,
+        attachmentItem = data.attachmentItem,
+        attachmentItemId = data.attachmentItemId,
+        fromContainerId = data.fromContainerId
+    })
+    cb('ok')
+end)
+
+-- Handle Remove Attachment from Weapon (From NUI Context Menu)
+RegisterNUICallback('removeAttachment', function(data, cb)
+    print('[mx-inv] Debug Client: Removing attachment from slot ' ..
+        tostring(data.attachmentSlot) .. ' on weapon ' .. tostring(data.weaponId))
+    TriggerServerEvent('mx-inv:server:removeAttachment', {
+        weaponId = data.weaponId,
+        weaponContainerId = data.weaponContainerId,
+        attachmentSlot = data.attachmentSlot,
+        attachmentItem = data.attachmentItem,
+        toContainerId = data.toContainerId,
+        toSlot = data.toSlot
+    })
+    cb('ok')
+end)
+
+-- Sync attachments on equipped weapon (add/remove GTA components)
+RegisterNetEvent('mx-inv:client:syncAttachments', function(weaponHashName, attachments)
+    local ped = PlayerPedId()
+    local hash = GetHashKey(weaponHashName)
+    if not HasPedGotWeapon(ped, hash, false) then return end
+
+    -- Apply each attachment component
+    if attachments then
+        for slot, attachName in pairs(attachments) do
+            if attachName then
+                local attachDef = Items[attachName]
+                if attachDef and attachDef.attachment and attachDef.attachment.componentHash then
+                    local compHash = GetHashKey(attachDef.attachment.componentHash)
+                    if compHash ~= 0 then
+                        GiveWeaponComponentToPed(ped, hash, compHash)
+                        print('[mx-inv] Applied component: ' ..
+                            attachDef.attachment.componentHash .. ' to ' .. weaponHashName)
+                    end
+                end
+            end
+        end
+    end
+end)
+
+-- Remove a specific attachment component from weapon
+RegisterNetEvent('mx-inv:client:removeAttachmentComponent', function(weaponHashName, componentHashName)
+    local ped = PlayerPedId()
+    local hash = GetHashKey(weaponHashName)
+    if not HasPedGotWeapon(ped, hash, false) then return end
+
+    local compHash = GetHashKey(componentHashName)
+    if compHash ~= 0 then
+        RemoveWeaponComponentFromPed(ped, hash, compHash)
+        print('[mx-inv] Removed component: ' .. componentHashName .. ' from ' .. weaponHashName)
+    end
 end)
 
 -- Set Ammo & Play Reload Animation (Native Feel)
@@ -376,51 +472,61 @@ RegisterNetEvent('mx-inv:client:setAmmoAndReload', function(weaponHashName, ammo
     end
 end)
 
--- Manual Reload Loop (Disable Auto-Reload + R key)
+RegisterNetEvent('mx-inv:client:addWeaponAmmo', function(weaponHash, amountToAdd)
+    local ped = PlayerPedId()
+    if HasPedGotWeapon(ped, weaponHash, false) then
+        local currentAmmo = GetAmmoInPedWeapon(ped, weaponHash)
+        -- The server already calculated the total ammo and updated DB.
+        -- We just add to the ped here.
+        AddAmmoToPed(ped, weaponHash, amountToAdd)
+
+        -- Force a reload if we have no clip
+        local _, clipAmmo = GetAmmoInClip(ped, weaponHash)
+        if clipAmmo == 0 then
+            MakePedReload(ped)
+        end
+    end
+end)
+
+-- Ammo Sync Loop (Total and Clip)
 Citizen.CreateThread(function()
     while true do
-        Citizen.Wait(0)
+        Citizen.Wait(500) -- Check every 500ms for ammo changes
         local ped = PlayerPedId()
-        if IsPedArmed(ped, 4) then
-            -- Disable Auto Reload
-            SetPedConfigFlag(ped, 184, true) -- CPED_CONFIG_FLAG_PreventAutoReload
+        if DoesEntityExist(ped) and not IsEntityDead(ped) then
+            local selectedWeapon = GetSelectedPedWeapon(ped)
+            if selectedWeapon ~= GetHashKey("WEAPON_UNARMED") then
+                local currentTotalAmmo = GetAmmoInPedWeapon(ped, selectedWeapon)
+                local _, currentClipAmmo = GetAmmoInClip(ped, selectedWeapon)
 
-            -- Disable Native R (Melee/Reload) to prevent pistol whipping
-            DisableControlAction(0, 45, true)
-            DisableControlAction(0, 140, true) -- Melee Light
+                local cacheKey = tostring(currentTotalAmmo) .. "_" .. tostring(currentClipAmmo)
 
-            -- Detect R press
-            if IsDisabledControlJustPressed(0, 45) then -- INPUT_RELOAD
-                local _, hash = GetCurrentPedWeapon(ped)
-                TriggerServerEvent('mx-inv:server:reloadWeapon', hash)
+                -- Initialize cache if nil
+                if lastAmmoCache[selectedWeapon] == nil then
+                    lastAmmoCache[selectedWeapon] = cacheKey
+                    TriggerServerEvent('mx-inv:server:updateAmmo', selectedWeapon, currentTotalAmmo, currentClipAmmo)
+                end
+
+                -- Sync if changed
+                if lastAmmoCache[selectedWeapon] ~= cacheKey then
+                    TriggerServerEvent('mx-inv:server:updateAmmo', selectedWeapon, currentTotalAmmo, currentClipAmmo)
+                    lastAmmoCache[selectedWeapon] = cacheKey
+                end
             end
         end
     end
 end)
 
--- Ammo Sync Loop
-Citizen.CreateThread(function()
-    while true do
-        Citizen.Wait(1000) -- Check every second
-        local ped = PlayerPedId()
-        if DoesEntityExist(ped) and not IsEntityDead(ped) then
-            local selectedWeapon = GetSelectedPedWeapon(ped)
-            if selectedWeapon ~= GetHashKey("WEAPON_UNARMED") then
-                local currentAmmo = GetAmmoInPedWeapon(ped, selectedWeapon)
-
-                -- Initialize cache if nil
-                if lastAmmoCache[selectedWeapon] == nil then
-                    lastAmmoCache[selectedWeapon] = currentAmmo
-                end
-
-                -- Sync if changed
-                if lastAmmoCache[selectedWeapon] ~= currentAmmo then
-                    TriggerServerEvent('mx-inv:server:updateAmmo', selectedWeapon, currentAmmo)
-                    lastAmmoCache[selectedWeapon] = currentAmmo
-                end
-            end
-        end
-    end
+-- Receive precise ammo updates from server and update UI in real-time
+RegisterNetEvent('mx-inv:client:syncAmmoUI', function(weaponSlot, totalAmmo, clipAmmo)
+    SendNUIMessage({
+        action = 'updateWeaponAmmo',
+        data = {
+            weaponSlot = weaponSlot,
+            totalAmmo = totalAmmo,
+            clipAmmo = clipAmmo
+        }
+    })
 end)
 
 AddEventHandler('onResourceStop', function(resourceName)
@@ -431,4 +537,60 @@ AddEventHandler('onResourceStop', function(resourceName)
     CloseInventory()
     -- Ensure NUI focus is released (CloseInventory does it, but double check)
     SetNuiFocus(false, false)
+end)
+
+-- Handle Player Loaded (Initial sync of equipped gear)
+RegisterNetEvent('mx-inv:client:playerLoaded', function(equipment)
+    print('[mx-inv] Received initial equipment state, syncing visuals...')
+    if equipment then
+        for slot, item in pairs(equipment) do
+            if item and item.name then
+                local ammoToLoad = tonumber(item.metadata and item.metadata.ammo) or 0
+                local attachments = item.metadata and item.metadata.attachments or nil
+                TriggerEvent('mx-inv:client:updateEquipment', item.name, true, ammoToLoad, attachments)
+            end
+        end
+    end
+end)
+
+-- Re-apply equipment after resource restart (script hot-reload)
+AddEventHandler('onResourceStart', function(resourceName)
+    if GetCurrentResourceName() ~= resourceName then return end
+    -- Wait for the game to be ready before re-giving weapons
+    SetTimeout(2000, function()
+        print('[mx-inv] Resource restarted. Requesting equipment re-sync...')
+        TriggerServerEvent('mx-inv:server:requestEquipment')
+    end)
+end)
+
+-- Re-apply equipment when player spawns (works with spawn managers: spawnmanager, qb-spawn, etc.)
+AddEventHandler('playerSpawned', function()
+    print('[mx-inv] playerSpawned detected. Requesting equipment re-sync...')
+    SetTimeout(1000, function()
+        TriggerServerEvent('mx-inv:server:requestEquipment')
+    end)
+end)
+
+-- Death detection: re-apply equipment when player respawns after dying
+local wasDead = false
+Citizen.CreateThread(function()
+    while true do
+        Citizen.Wait(1000)
+        local ped = PlayerPedId()
+        if DoesEntityExist(ped) then
+            local isDead = IsEntityDead(ped) or IsPedFatallyInjured(ped)
+            if isDead then
+                -- Mark as dead, wait for respawn
+                wasDead = true
+            elseif wasDead then
+                -- Player just respawned
+                wasDead = false
+                print('[mx-inv] Player respawned. Requesting equipment re-sync...')
+                -- Small delay to let GTA finish respawn routines before giving weapons
+                SetTimeout(2000, function()
+                    TriggerServerEvent('mx-inv:server:requestEquipment')
+                end)
+            end
+        end
+    end
 end)

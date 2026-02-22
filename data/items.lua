@@ -51,8 +51,12 @@ Items = {
         image = "pistol.png",
         equipment = {
             weaponHash = "WEAPON_PISTOL",
-            caliber = "9x19mm",
+            caliber = "ammo_9mm",
             defaultMagCapacity = 12,
+            supportedAttachments = {
+                muzzle = { label = "Muzzle", componentHash = "COMPONENT_AT_PI_SUPP_02" },
+                scope  = { label = "Scope", componentHash = "" },
+            }
         }
     },
 
@@ -65,8 +69,14 @@ Items = {
         image = "rifle.png",
         equipment = {
             weaponHash = "WEAPON_ASSAULTRIFLE",
-            caliber = "5.56x45",
+            caliber = "ammo_556",
             defaultMagCapacity = 30,
+            supportedAttachments = {
+                muzzle = { label = "Muzzle", componentHash = "COMPONENT_AT_AR_SUPP_02" },
+                scope  = { label = "Scope", componentHash = "COMPONENT_AT_SCOPE_MACRO_02" },
+                grip   = { label = "Grip", componentHash = "COMPONENT_AT_AR_AFGRIP" },
+                skin   = { label = "Skin", componentHash = "" },
+            }
         }
     },
 
@@ -79,8 +89,11 @@ Items = {
         image = "shotgun.png",
         equipment = {
             weaponHash = "WEAPON_PUMPSHOTGUN",
-            caliber = "12gauge",
+            caliber = "ammo_12gauge",
             defaultMagCapacity = 8,
+            supportedAttachments = {
+                muzzle = { label = "Muzzle", componentHash = "COMPONENT_AT_SR_SUPP" },
+            }
         }
     },
 
@@ -97,61 +110,8 @@ Items = {
     },
 
     -- ============================================================
-    -- MAGAZINES
     -- ============================================================
-
-    -- 9x19mm magazines
-    ['mag_pistol_12'] = {
-        label = "Pistol Mag (12rnd)",
-        weight = 0.2,
-        size = { x = 1, y = 1 },
-        type = "magazine",
-        image = "mag_pistol.png",
-        magazine = {
-            caliber = "9x19mm",
-            capacity = 12,
-        }
-    },
-    ['mag_pistol_ext_17'] = {
-        label = "Extended Pistol Mag (17rnd)",
-        weight = 0.25,
-        size = { x = 1, y = 1 },
-        type = "magazine",
-        image = "mag_pistol_ext.png",
-        magazine = {
-            caliber = "9x19mm",
-            capacity = 17,
-        }
-    },
-
-    -- 5.56x45mm magazines
-    ['mag_stanag_30'] = {
-        label = "STANAG 30rnd",
-        weight = 0.4,
-        size = { x = 1, y = 2 },
-        type = "magazine",
-        image = "mag_stanag.png",
-        magazine = {
-            caliber = "5.56x45",
-            capacity = 30,
-        }
-    },
-
-    -- 12 Gauge magazines (tube/internal)
-    ['mag_shotgun_8'] = {
-        label = "Shotgun Shell Tube (8rnd)",
-        weight = 0.3,
-        size = { x = 1, y = 2 },
-        type = "magazine",
-        image = "mag_shotgun.png",
-        magazine = {
-            caliber = "12gauge",
-            capacity = 8,
-        }
-    },
-
-    -- ============================================================
-    -- AMMUNITION (stackable, max 60)
+    -- AMMUNITION (stackable, max 150)
     -- ============================================================
     ['ammo_9mm'] = {
         label = "9x19mm",
@@ -160,9 +120,9 @@ Items = {
         type = "ammo",
         image = "ammo_9mm.png",
         stackable = true,
-        maxStack = 60,
+        maxStack = 150,
         ammo = {
-            caliber = "9x19mm",
+            caliber = "ammo_9mm",
         }
     },
     ['ammo_556'] = {
@@ -172,9 +132,9 @@ Items = {
         type = "ammo",
         image = "ammo_556.png",
         stackable = true,
-        maxStack = 60,
+        maxStack = 150,
         ammo = {
-            caliber = "5.56x45",
+            caliber = "ammo_556",
         }
     },
     ['ammo_12gauge'] = {
@@ -184,9 +144,68 @@ Items = {
         type = "ammo",
         image = "ammo_12gauge.png",
         stackable = true,
-        maxStack = 60,
+        maxStack = 150,
         ammo = {
-            caliber = "12gauge",
+            caliber = "ammo_12gauge",
+        }
+    },
+
+    -- ============================================================
+    -- WEAPON ATTACHMENTS
+    -- ============================================================
+    ['suppressor_pistol'] = {
+        label = "Pistol Suppressor",
+        weight = 0.3,
+        size = { x = 2, y = 1 },
+        type = "attachment_muzzle",
+        image = "suppressor.png",
+        attachment = {
+            slot = "muzzle",
+            componentHash = "COMPONENT_AT_PI_SUPP_02",
+        }
+    },
+    ['suppressor_rifle'] = {
+        label = "Rifle Suppressor",
+        weight = 0.4,
+        size = { x = 2, y = 1 },
+        type = "attachment_muzzle",
+        image = "suppressor_rifle.png",
+        attachment = {
+            slot = "muzzle",
+            componentHash = "COMPONENT_AT_AR_SUPP_02",
+        }
+    },
+    ['flashlight'] = {
+        label = "Tactical Flashlight",
+        weight = 0.2,
+        size = { x = 1, y = 1 },
+        type = "attachment_scope",
+        image = "flashlight.png",
+        attachment = {
+            slot = "scope",
+            componentHash = "COMPONENT_AT_PI_FLSH",
+        }
+    },
+    ['scope_holo'] = {
+        label = "Holographic Sight",
+        weight = 0.3,
+        size = { x = 1, y = 1 },
+        type = "attachment_scope",
+        image = "scope_holo.png",
+        attachment = {
+            slot = "scope",
+            componentHash = "COMPONENT_AT_SCOPE_MACRO_02",
+        }
+    },
+    ['grip_vertical'] = {
+        label = "Vertical Grip",
+        weight = 0.2,
+        size = { x = 1, y = 1 },
+        type = "attachment_grip",
+        image = "grip.png",
+        attachment = {
+            slot = "grip",
+            componentHash = "COMPONENT_AT_AR_AFGRIP",
         }
     },
 

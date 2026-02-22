@@ -8,6 +8,7 @@ import { ContainerWindow } from './components/ContainerWindow';
 import { ItemDetailsWindow } from './components/ItemDetailsWindow';
 import { snapCenterToCursor } from './utils/modifiers';
 import { CONTAINER_LAYOUTS } from './config/layouts';
+import { ITEM_CONFIGS } from './config/items';
 import { DndContext, type DragEndEvent, type DragMoveEvent, useSensor, useSensors, PointerSensor, rectIntersection, DragOverlay } from '@dnd-kit/core';
 import { PlayerInventory } from './components/PlayerInventory';
 import { StashInventory } from './components/StashInventory';
@@ -29,11 +30,13 @@ interface HighlightState {
 function App() {
   const {
     isOpen, setOpen, setContainerData, moveItem, containers, updateContainerWeight,
-    equipment, setEquipment, equipItem, unequipItem, swapEquipment, loadMagazine, loadAmmoIntoMag, toggleItemFold, setContainers,
-    openWindows, closeWindow, detailsWindows, closeDetails
+    equipment, setEquipment, equipItem, unequipItem, swapEquipment, loadAmmoIntoWeapon, toggleItemFold, setContainers,
+    openWindows, closeWindow, detailsWindows, closeDetails, attachToWeapon, stackItems, setDragCompatibility
   } = useInventoryStore();
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [activeDragData, setActiveDragData] = useState<any | null>(null);
   const [activeDragRotation, setActiveDragRotation] = useState<boolean>(false);
+  const [activeDragFolded, setActiveDragFolded] = useState<boolean>(false);
   const [dragHighlight, setDragHighlight] = useState<HighlightState | undefined>(undefined);
 
   const [activeContainerId, setActiveContainerId] = useState<string | null>(null);
@@ -78,21 +81,36 @@ function App() {
           // Update Cache if provided
           if (incomingDefs) {
             itemDefsRef.current = incomingDefs;
+            (window as any).__itemDefs = incomingDefs;
           }
 
           const defs = itemDefsRef.current;
 
           const enrichItems = (items: any[]) => items.map(item => {
             const def = defs[item.name] || {};
+
+            // Resolve item size: if folded, use foldedSize from ITEM_CONFIGS;
+            // otherwise use def.size (from server item definition) or existing item.size.
+            const itemConfig = ITEM_CONFIGS[item.name];
+            let resolvedSize: { x: number; y: number };
+            if (item.folded && itemConfig) {
+              resolvedSize = itemConfig.foldedSize;
+            } else if (itemConfig && !item.folded) {
+              resolvedSize = itemConfig.expandedSize;
+            } else {
+              resolvedSize = def?.size || item.size || { x: 1, y: 1 };
+            }
+
             return {
               ...def,
               ...item,
-              size: def?.size || item.size || { x: 1, y: 1 },
+              size: resolvedSize,
               weight: def?.weight || item.weight || 0,
               type: def?.type || item.type || 'generic',
               image: (def?.image || item.image) ? `items/${def?.image || item.image}` : undefined
             };
           });
+
 
           // Dynamic Container Loading
           const newContainers: Record<string, any> = {};
@@ -113,9 +131,13 @@ function App() {
             Object.entries(equipData).forEach(([slot, item]: [string, any]) => {
               if (item) {
                 const def = defs[item.name] || {};
+                // Equipment items are always expanded — never folded while equipped
+                const itemConfig = ITEM_CONFIGS[item.name];
                 enrichedEquip[slot] = {
                   ...def,
                   ...item,
+                  folded: false,
+                  size: itemConfig ? itemConfig.expandedSize : (def?.size || item.size || { x: 1, y: 1 }),
                   image: (def?.image || item.image) ? `items/${def?.image || item.image}` : undefined
                 };
               } else {
@@ -134,6 +156,9 @@ function App() {
 
       if (action === 'close') {
         setOpen(false);
+      } else if (action === 'updateWeaponAmmo') {
+        const { weaponSlot, totalAmmo, clipAmmo } = data;
+        useInventoryStore.getState().updateWeaponAmmo(weaponSlot, totalAmmo, clipAmmo);
       } else if (action === 'updateWeights') {
         const weights = data as WeightUpdate;
         Object.entries(weights).forEach(([id, weight]) => {
@@ -149,10 +174,10 @@ function App() {
   useEffect(() => {
     if (activeId) {
       // Check in containers
-      let item: any = Object.values(containers).flatMap((c: any) => c.items).find((i: any) => i.name === activeId);
+      let item: any = Object.values(containers).flatMap((c: any) => c.items).find((i: any) => i.id === activeId);
       // Check in equipment
       if (!item) {
-        item = Object.values(equipment).find(i => i?.name === activeId);
+        item = Object.values(equipment).find(i => i?.id === activeId);
       }
 
       if (item) setActiveDragRotation(!!item.rotated);
@@ -178,24 +203,25 @@ function App() {
       }
 
       if (e.key.toLowerCase() === 'f') {
-        // Toggle Fold - Scoped
-        if (activeContainerId) {
-          toggleItemFold(activeContainerId, activeId as string);
+        const containerId = activeContainerId || activeDragData?.containerId;
+        if (!containerId) return;
+
+        if (containerId.startsWith('equip-')) {
+          // When dragging FROM equipment, only toggle the visual fold state.
+          // The store item stays expanded (slot always shows expanded).
+          // finalFolded is read from activeDragFolded at drop time.
+          setActiveDragFolded(prev => !prev);
         } else {
-          // Fallback Search
-          let itemInfo = Object.values(containers).flatMap((c: any) => c.items.map((i: any) => ({ ...i, containerId: c.id })))
-            .find((i: any) => i.name === activeId);
+          // Container item: update store + visual
+          toggleItemFold(containerId, activeId as string);
+          setActiveDragFolded(prev => !prev);
 
-          if (!itemInfo) {
-            const equipItem = Object.values(equipment).find((i: any) => i?.name === activeId);
-            if (equipItem) {
-              itemInfo = { ...equipItem, containerId: 'equipment' };
-            }
-          }
-
-          if (itemInfo) {
-            toggleItemFold(itemInfo.containerId, activeId as string);
-          }
+          // Persist fold to server
+          fetchNui('foldItem', {
+            item: activeDragData?.name,
+            id: activeId,
+            container: containerId
+          });
         }
       }
 
@@ -208,10 +234,11 @@ function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, activeId, activeContainerId, containers, equipment, toggleItemFold]);
+  }, [isOpen, activeId, activeContainerId, activeDragData, containers, equipment, toggleItemFold]);
 
   const handleDragStart = (event: any) => {
     setActiveId(event.active.id);
+    setActiveDragData(event.active.data.current);
     if (event.active.data.current?.containerId) {
       setActiveContainerId(event.active.data.current.containerId);
     } else {
@@ -225,6 +252,118 @@ function App() {
     const item = event.active.data.current; // Use data directly!
     if (item && item.rotated !== undefined) {
       setActiveDragRotation(item.rotated);
+    }
+
+    // Set fold state from item — but equipment items are ALWAYS expanded
+    if (item) {
+      const itemFromEquip = !event.active.data.current?.containerId ||
+        (event.active.data.current?.containerId as string)?.startsWith('equip-');
+      setActiveDragFolded(itemFromEquip ? false : !!item.folded);
+    }
+
+    // Compute compatible targets for visual feedback
+    if (item) {
+      const defs = itemDefsRef.current;
+      const compatibleIds = new Set<string>();
+      let dragType: 'ammo' | 'attachment' | 'stack' | null = null;
+
+      // Ammo -> find compatible weapons (items + equipment slots)
+      if (item.type === 'ammo') {
+        dragType = 'ammo';
+        const ammoDef = defs[item.name];
+        const ammoCaliber = ammoDef?.ammo?.caliber;
+        if (ammoCaliber) {
+          for (const c of Object.values(containers)) {
+            for (const ci of c.items) {
+              if (ci.type?.startsWith('weapon_')) {
+                const wDef = defs[ci.name];
+                if (wDef?.equipment?.caliber === ammoCaliber) compatibleIds.add(ci.id);
+              }
+            }
+          }
+          for (const [slot, eq] of Object.entries(equipment)) {
+            if (eq?.type?.startsWith('weapon_')) {
+              const wDef = defs[eq.name];
+              if (wDef?.equipment?.caliber === ammoCaliber) {
+                compatibleIds.add(eq.id);
+                compatibleIds.add(`equip-${slot}`);
+              }
+            }
+          }
+        }
+      }
+
+      // Attachment -> find compatible weapons (items + equipment slots + attachment slots)
+      if (item.type?.startsWith('attachment_')) {
+        dragType = 'attachment';
+        const attachDef = defs[item.name];
+        const attachSlot = attachDef?.attachment?.slot;
+        if (attachSlot) {
+          for (const c of Object.values(containers)) {
+            for (const ci of c.items) {
+              if (ci.type?.startsWith('weapon_')) {
+                const wDef = defs[ci.name];
+                if (wDef?.equipment?.supportedAttachments?.[attachSlot] && !ci.metadata?.attachments?.[attachSlot]) {
+                  compatibleIds.add(ci.id);
+                  // Add the attachment droppable slot ID for the details window
+                  compatibleIds.add(`attachment-${ci.id}-${attachSlot}`);
+                }
+              }
+            }
+          }
+          for (const [slot, eq] of Object.entries(equipment)) {
+            if (eq?.type?.startsWith('weapon_')) {
+              const wDef = defs[eq.name];
+              if (wDef?.equipment?.supportedAttachments?.[attachSlot] && !eq.metadata?.attachments?.[attachSlot]) {
+                compatibleIds.add(eq.id);
+                compatibleIds.add(`equip-${slot}`);
+                compatibleIds.add(`attachment-${eq.id}-${attachSlot}`);
+              }
+            }
+          }
+        }
+      }
+
+      // Stackable -> find same-name items with room
+      if (item.stackable) {
+        dragType = dragType || 'stack';
+        for (const c of Object.values(containers)) {
+          for (const ci of c.items) {
+            if (ci.id !== item.id && ci.name === item.name && ci.stackable) {
+              const maxStack = ci.maxStack || 60;
+              if (ci.count < maxStack) compatibleIds.add(ci.id);
+            }
+          }
+        }
+      }
+
+      // Equipment-compatible items (weapons, vests, etc.) -> highlight matching empty equipment slots
+      if (item.type && !item.type.startsWith('attachment_') && item.type !== 'ammo') {
+        const equipSlotMap: Record<string, string[]> = {
+          primary: ['weapon_primary', 'weapon_secondary', 'weapon_smg', 'weapon_rifle', 'weapon_sniper', 'weapon_shotgun'],
+          secondary: ['weapon_primary', 'weapon_secondary', 'weapon_smg', 'weapon_rifle', 'weapon_sniper', 'weapon_shotgun'],
+          pistol: ['weapon_pistol'],
+          melee: ['weapon_melee'],
+          head: ['helmet'],
+          face: ['mask'],
+          armor: ['armor'],
+          earpiece: ['earpiece'],
+          vest: ['vest'],
+          bag: ['backpack', 'bag'],
+        };
+        for (const [slot, accepted] of Object.entries(equipSlotMap)) {
+          if (accepted.includes(item.type) && !equipment[slot]) {
+            compatibleIds.add(`equip-${slot}`);
+            dragType = dragType || 'stack'; // Reuse 'stack' as generic drag type
+          }
+        }
+      }
+
+      if (compatibleIds.size > 0 && dragType) {
+        setDragCompatibility({ targetIds: compatibleIds, dragType });
+      } else {
+        setDragCompatibility(null);
+      }
     }
   };
 
@@ -338,7 +477,7 @@ function App() {
 
     // 3. Collision Check
     const hasCollision = container.items.some((otherItem) => {
-      if (otherItem.name === item.name) return false; // Ignore self 
+      if (otherItem.id === item.id) return false; // Ignore self
 
       const otherRotated = !!otherItem.rotated;
       const otherOriginalSize = otherItem.size || { x: 1, y: 1 };
@@ -359,7 +498,7 @@ function App() {
     return true;
   }, [containers, parseContainerId]);
 
-  const updateDragHighlight = useCallback((overId: string, activeRect: any, rotation: boolean) => {
+  const updateDragHighlight = useCallback((overId: string, activeRect: any, rotation: boolean, folded: boolean) => {
     if (!overId) {
       setDragHighlight(undefined);
       return;
@@ -373,23 +512,28 @@ function App() {
       return;
     }
 
-    let activeItem: any = Object.values(containers).flatMap((c: any) => c.items).find((i: any) => i.id === activeId);
-    if (!activeItem) {
-      activeItem = Object.values(equipment).find(i => i?.id === activeId);
-    }
+    const activeItem: any = activeDragData;
 
     if (!activeItem) return;
+
+    // Resolve current size respecting live fold state
+    const config = ITEM_CONFIGS[activeItem.name];
+    const baseSize: { x: number; y: number } = config
+      ? (folded ? config.foldedSize : config.expandedSize)
+      : (activeItem.size || { x: 1, y: 1 });
+
+    // Build a virtual item with the correct current size for validation
+    const activeItemWithCurrentSize = { ...activeItem, size: baseSize };
 
     // calculateTargetSlot returns RELATIVE slot to the droppable element
     const relativeSlot = calculateTargetSlot(overId, activeRect);
 
     if (relativeSlot) {
       // Validate using Global Logic (inside the helper)
-      const isValid = validatePlacement(overId, activeItem, relativeSlot, rotation);
+      const isValid = validatePlacement(overId, activeItemWithCurrentSize, relativeSlot, rotation);
 
       const highlightSlots = [];
-      const originalSize = activeItem.size || { x: 1, y: 1 };
-      const size = rotation ? { x: originalSize.y, y: originalSize.x } : originalSize;
+      const size = rotation ? { x: baseSize.y, y: baseSize.x } : baseSize;
 
       // Generate Highlight Slots (Visual / Relative)
       for (let x = 0; x < size.x; x++) {
@@ -407,7 +551,7 @@ function App() {
     } else {
       setDragHighlight(undefined);
     }
-  }, [activeId, containers, equipment, calculateTargetSlot, validatePlacement, parseContainerId]);
+  }, [activeId, activeDragFolded, containers, equipment, calculateTargetSlot, validatePlacement, parseContainerId]);
 
 
   const handleDragMove = (event: DragMoveEvent) => {
@@ -426,25 +570,90 @@ function App() {
     // Update refs
     currentDragState.current = { overId: over.id as string, activeRect };
 
-    updateDragHighlight(over.id as string, activeRect, activeDragRotation);
+    updateDragHighlight(over.id as string, activeRect, activeDragRotation, activeDragFolded);
   };
 
-  // Trigger update when rotation changes
+  // Trigger update when rotation or fold changes
   useEffect(() => {
     if (currentDragState.current && activeId) {
-      updateDragHighlight(currentDragState.current.overId, currentDragState.current.activeRect, activeDragRotation);
+      updateDragHighlight(currentDragState.current.overId, currentDragState.current.activeRect, activeDragRotation, activeDragFolded);
     }
-  }, [activeDragRotation, activeId, updateDragHighlight]);
+  }, [activeDragRotation, activeDragFolded, activeId, updateDragHighlight]);
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
+    const finalRotation = activeDragRotation;
+    // Capture fold state BEFORE clearing — needed for equipment unequip path
+    const finalFolded = activeDragFolded;
+
+    // Clear States
     setActiveId(null);
+    setActiveDragData(null);
     setActiveContainerId(null);
+    setActiveDragRotation(false); // Fix rotation bleed
+    setActiveDragFolded(false);   // Fix fold bleed
     setDragHighlight(undefined); // Clear highlight
     currentDragState.current = null;
-    const finalRotation = activeDragRotation;
+    setDragCompatibility(null); // Clear compatibility highlights
 
-    if (!over) return;
+    if (!over) {
+      // If dragging an installed attachment and dropping into empty space, also remove it
+      const dragData = active.data.current;
+      if (dragData?.type === 'installed-attachment') {
+        const { weaponId, weaponContainerId, slotId, attachmentName } = dragData;
+        useInventoryStore.getState().removeAttachment(weaponId, weaponContainerId, slotId, 'player-inv');
+        fetchNui('removeAttachment', {
+          weaponId,
+          weaponContainerId,
+          attachmentSlot: slotId,
+          attachmentItem: attachmentName
+        });
+      }
+      return;
+    }
+
+    // Handle installed-attachment being dropped onto a container
+    const dragData = active.data.current;
+    if (dragData?.type === 'installed-attachment') {
+      const { weaponId, weaponContainerId, slotId, attachmentName } = dragData;
+
+      const toId = over.id as string;
+      const { baseId, regionOffset } = parseContainerId(toId);
+
+      const containerElement = document.getElementById(toId);
+      if (!containerElement) return;
+
+      const containerRect = containerElement.getBoundingClientRect();
+      const itemRect = (active.rect.current as any).translated;
+      if (!itemRect) return;
+
+      const PADDING_X = 13;
+      const PADDING_Y = 13;
+
+      const relativeX = itemRect.left - containerRect.left - PADDING_X;
+      const relativeY = itemRect.top - containerRect.top - PADDING_Y;
+
+      const relSlotX = Math.max(1, Math.round(relativeX / (SLOT_SIZE + GAP)) + 1);
+      const relSlotY = Math.max(1, Math.round(relativeY / (SLOT_SIZE + GAP)) + 1);
+
+      const isValidPlacement = validatePlacement(toId, dragData, { x: relSlotX, y: relSlotY }, finalRotation);
+      if (!isValidPlacement) return;
+
+      const slotX = relSlotX + regionOffset.x;
+      const slotY = relSlotY + regionOffset.y;
+      const targetSlot = { x: slotX, y: slotY };
+
+      useInventoryStore.getState().removeAttachment(weaponId, weaponContainerId, slotId, baseId, targetSlot);
+      fetchNui('removeAttachment', {
+        weaponId,
+        weaponContainerId,
+        attachmentSlot: slotId,
+        attachmentItem: attachmentName,
+        toContainerId: baseId,
+        toSlot: targetSlot
+      });
+      return;
+    }
 
 
     const itemId = active.id as string;
@@ -478,35 +687,102 @@ function App() {
 
     const toId = over.id as string;
 
-    // --- EQUIPMENT LOGIC ---
+    // --- ATTACHMENT SLOT LOGIC ---
+    if (toId.startsWith('attachment-')) {
+      const slotData = over.data.current;
+      if (!slotData) return;
+
+      const attachmentSlot = slotData.slotId as string;
+      const weaponId = slotData.weaponId as string;
+      const weaponContainerId = slotData.weaponContainerId as string;
+
+      // Must be an attachment item
+      if (!item.type?.startsWith('attachment_')) return;
+
+      // Validate the attachment type matches the slot
+      const defs = itemDefsRef.current;
+      const attachDef = defs[item.name];
+      if (!attachDef?.attachment || attachDef.attachment.slot !== attachmentSlot) return;
+
+      // Call store action
+      attachToWeapon(weaponId, weaponContainerId, attachmentSlot, item, fromContainerId);
+
+      // Notify server
+      fetchNui('attachToWeapon', {
+        weaponId,
+        weaponContainerId,
+        attachmentSlot,
+        attachmentItem: item.name,
+        attachmentItemId: item.id,
+        fromContainerId
+      });
+      return;
+    }
     if (toId.startsWith('equip-')) {
       const targetSlotId = toId.replace('equip-', '');
       const acceptedTypes = over.data.current?.acceptedTypes as string[] || [];
 
-      // Validate Type (skip for magazines — they have special handling)
-      const isMagazine = item.type === 'magazine';
-      if (!isMagazine && acceptedTypes.length > 0 && item.type && !acceptedTypes.includes(item.type)) {
+      // Validate Type (skip for ammo and attachments — they have special handling)
+      const isAmmo = item.type === 'ammo';
+      const isAttachment = item.type?.startsWith('attachment_');
+      if (!isAmmo && !isAttachment && acceptedTypes.length > 0 && item.type && !acceptedTypes.includes(item.type)) {
         return;
       }
 
-      // --- MAGAZINE → WEAPON SLOT ---
-      if (isMagazine && !fromContainerId.startsWith('equip-')) {
-        // Dragging a magazine from inventory onto a weapon equipment slot
+      // --- ATTACHMENT → WEAPON SLOT ---
+      if (isAttachment && !fromContainerId.startsWith('equip-')) {
+        const weapon = equipment[targetSlotId];
+        if (!weapon || !weapon.type?.startsWith('weapon_')) return;
+
+        const defs = itemDefsRef.current;
+        const attachDef = defs[item.name];
+        if (!attachDef?.attachment?.slot) return;
+
+        const attachmentSlot = attachDef.attachment.slot;
+        const weaponDef = defs[weapon.name];
+        if (!weaponDef?.equipment?.supportedAttachments?.[attachmentSlot]) return;
+
+        // Check slot not already occupied
+        if (weapon.metadata?.attachments?.[attachmentSlot]) return;
+
+        attachToWeapon(weapon.id, `equip-${targetSlotId}`, attachmentSlot, item, fromContainerId);
+        fetchNui('attachToWeapon', {
+          weaponId: weapon.id,
+          weaponContainerId: `equip-${targetSlotId}`,
+          attachmentSlot,
+          attachmentItem: item.name,
+          attachmentItemId: item.id,
+          fromContainerId
+        });
+        return;
+      }
+
+      // --- AMMO → WEAPON SLOT ---
+      if (isAmmo && !fromContainerId.startsWith('equip-')) {
+        // Dragging ammo from inventory onto a weapon equipment slot
         const weapon = equipment[targetSlotId];
         if (!weapon || !weapon.type?.startsWith('weapon_')) return; // Must be a weapon slot with a weapon
 
-        // Caliber validation (check via metadata on the items)
-        const magCaliber = item.metadata?.caliber;
-        // We don't have caliber on the weapon item directly in metadata,
-        // but the server will validate. Frontend does best-effort.
-        if (!magCaliber) return;
+        // Strict Frontend Caliber validation
+        const defs = itemDefsRef.current;
+        const weaponDef = defs[weapon.name];
+        const ammoDef = defs[item.name];
 
-        loadMagazine(targetSlotId, item, fromContainerId);
-        fetchNui('loadMagazine', {
+        const weaponCaliber = weaponDef?.equipment?.caliber;
+        const ammoCaliber = ammoDef?.ammo?.caliber;
+
+        if (!weaponCaliber || !ammoCaliber || weaponCaliber !== ammoCaliber) {
+          // Reject drop silently (drag snaps back)
+          return;
+        }
+
+        loadAmmoIntoWeapon(weapon.id || targetSlotId, `equip-${targetSlotId}`, item, fromContainerId);
+        fetchNui('loadAmmoIntoWeapon', {
           id: item.id,
-          magazine: item.name,
+          ammoItem: item,
           weaponSlot: targetSlotId,
-          from: fromContainerId
+          weaponContainer: `equip-${targetSlotId}`,
+          ammoContainer: fromContainerId
         });
         return;
       }
@@ -559,8 +835,8 @@ function App() {
     const relSlotX = Math.max(1, Math.round(relativeX / (SLOT_SIZE + GAP)) + 1);
     const relSlotY = Math.max(1, Math.round(relativeY / (SLOT_SIZE + GAP)) + 1);
 
-    // --- AMMO -> MAGAZINE LOGIC ---
-    if (item.type === 'ammo' && containers[baseId]) {
+    // --- AMMO -> WEAPON IN GRID LOGIC ---
+    if (item.type === 'ammo' && !fromContainerId.startsWith('equip-') && containers[baseId]) {
       const targetContainer = containers[baseId];
       // Find item occupying the target slot
       const targetItem = targetContainer.items.find((i: any) => {
@@ -572,26 +848,109 @@ function App() {
           relSlotY >= iY && relSlotY < iY + iH;
       });
 
-      if (targetItem && targetItem.type === 'magazine') {
-        const ammoCaliber = item.ammo?.caliber || item.metadata?.caliber;
-        const magCaliber = targetItem.magazine?.caliber || targetItem.metadata?.caliber;
+      if (targetItem && targetItem.type?.startsWith('weapon_')) {
+        const defs = itemDefsRef.current;
+        const weaponDef = defs[targetItem.name];
+        const ammoDef = defs[item.name];
 
-        if (ammoCaliber && magCaliber && ammoCaliber === magCaliber) {
-          loadAmmoIntoMag(targetItem.id, item, baseId, fromContainerId);
-          fetchNui('loadAmmoIntoMag', {
+        const weaponCaliber = weaponDef?.equipment?.caliber;
+        const ammoCaliber = ammoDef?.ammo?.caliber;
+
+        if (weaponCaliber && ammoCaliber && weaponCaliber === ammoCaliber) {
+          loadAmmoIntoWeapon(targetItem.id, baseId, item, fromContainerId);
+          fetchNui('loadAmmoIntoWeapon', {
             id: item.id,
-            magazineId: targetItem.id, // Use Magazine ID
             ammoItem: item,
-            magazineContainer: baseId,
+            weaponSlot: targetItem.id, // send the ID of the weapon
+            weaponContainer: baseId,
             ammoContainer: fromContainerId
           });
+          return;
+        } else {
+          // Reject gracefully
           return;
         }
       }
     }
 
+    // --- ATTACHMENT -> WEAPON IN GRID LOGIC ---
+    if (item.type?.startsWith('attachment_') && !fromContainerId.startsWith('equip-') && containers[baseId]) {
+      const targetContainer = containers[baseId];
+      const targetItem = targetContainer.items.find((i: any) => {
+        const iX = i.slot.x;
+        const iY = i.slot.y;
+        const iW = i.size?.x || 1;
+        const iH = i.size?.y || 1;
+        return relSlotX >= iX && relSlotX < iX + iW &&
+          relSlotY >= iY && relSlotY < iY + iH;
+      });
+
+      if (targetItem && targetItem.type?.startsWith('weapon_')) {
+        const defs = itemDefsRef.current;
+        const attachDef = defs[item.name];
+        if (attachDef?.attachment?.slot) {
+          const attachmentSlot = attachDef.attachment.slot;
+          const weaponDef = defs[targetItem.name];
+          if (weaponDef?.equipment?.supportedAttachments?.[attachmentSlot] &&
+            !targetItem.metadata?.attachments?.[attachmentSlot]) {
+            attachToWeapon(targetItem.id, baseId, attachmentSlot, item, fromContainerId);
+            fetchNui('attachToWeapon', {
+              weaponId: targetItem.id,
+              weaponContainerId: baseId,
+              attachmentSlot,
+              attachmentItem: item.name,
+              attachmentItemId: item.id,
+              fromContainerId
+            });
+            return;
+          }
+        }
+        return; // Reject gracefully
+      }
+    }
+
+    // --- STACKABLE ITEM MERGE LOGIC ---
+    if (item.stackable && !fromContainerId.startsWith('equip-') && containers[baseId]) {
+      const targetContainer = containers[baseId];
+      // Find item occupying the target slot
+      const targetItem = targetContainer.items.find((i: any) => {
+        if (i.id === item.id) return false; // Skip self
+        const iX = i.slot.x;
+        const iY = i.slot.y;
+        const iW = i.size?.x || 1;
+        const iH = i.size?.y || 1;
+        return relSlotX >= iX && relSlotX < iX + iW &&
+          relSlotY >= iY && relSlotY < iY + iH;
+      });
+
+      if (targetItem && targetItem.name === item.name && targetItem.stackable) {
+        const maxStack = targetItem.maxStack || 60;
+        if (targetItem.count < maxStack) {
+          // Merge stacks
+          stackItems(item.id, fromContainerId, targetItem.id, baseId);
+          fetchNui('stackItems', {
+            fromItemId: item.id,
+            fromContainerId,
+            toItemId: targetItem.id,
+            toContainerId: baseId
+          });
+          return;
+        }
+        // Target is full — reject the drop entirely
+        return;
+      }
+    }
+
     // Validate Placement BEFORE Moving
-    const isValidPlacement = validatePlacement(toId, item, { x: relSlotX, y: relSlotY }, finalRotation);
+    // When coming from equipment with finalFolded=true, validate against the folded size
+    let itemForValidation = item;
+    if (fromContainerId.startsWith('equip-') && finalFolded) {
+      const cfg = ITEM_CONFIGS[(item as any).name];
+      if (cfg) {
+        itemForValidation = { ...item, size: cfg.foldedSize } as any;
+      }
+    }
+    const isValidPlacement = validatePlacement(toId, itemForValidation, { x: relSlotX, y: relSlotY }, finalRotation);
 
     if (!isValidPlacement) {
       // Option: Animate snap back?
@@ -605,14 +964,16 @@ function App() {
     // Un-equip if coming from equipment
     if (fromContainerId.startsWith('equip-')) {
       const sourceSlotId = fromContainerId.replace('equip-', '');
-      unequipItem(sourceSlotId, baseId, { x: slotX, y: slotY });
+      // Use finalFolded (from activeDragFolded before clear) — equipment store stays expanded
+      unequipItem(sourceSlotId, baseId, { x: slotX, y: slotY }, finalFolded);
 
       fetchNui('unequipItem', {
         item: item.name,
         id: item.id,
         fromSlot: sourceSlotId,
         to: baseId,
-        slot: { x: slotX, y: slotY }
+        slot: { x: slotX, y: slotY },
+        folded: finalFolded  // Tell server the chosen fold state
       });
     } else {
       // Standard Move
@@ -625,35 +986,27 @@ function App() {
         to: baseId,
         slot: { x: slotX, y: slotY },
         fromSlot: item.slot,
-        rotated: finalRotation
+        rotated: finalRotation,
+        folded: item.folded // Send folded state from store
       });
     }
   };
 
   // Helper to find active item for Overlay
   const renderDragOverlay = () => {
-    if (!activeId) return null;
+    if (!activeId || !activeDragData) return null;
 
-    let activeItem: any = null;
-    if (activeContainerId) {
-      if (containers[activeContainerId]) {
-        activeItem = containers[activeContainerId].items.find((i: any) => i.id === activeId);
-      } else {
-        activeItem = Object.values(equipment).find(i => i?.id === activeId);
-      }
+    const activeItem = activeDragData;
+
+    // Resolve current size respecting live fold state
+    const config = ITEM_CONFIGS[activeItem.name];
+    let baseSize: { x: number; y: number };
+    if (config) {
+      baseSize = activeDragFolded ? config.foldedSize : config.expandedSize;
+    } else {
+      baseSize = activeItem.size || { x: 1, y: 1 };
     }
-
-    if (!activeItem) {
-      activeItem = Object.values(containers).flatMap((c: any) => c.items).find((i: any) => i.name === activeId);
-      if (!activeItem) {
-        activeItem = Object.values(equipment).find(i => i?.name === activeId);
-      }
-    }
-
-    if (!activeItem) return null;
-
-    const originalSize = activeItem.size || { x: 1, y: 1 };
-    const currentSize = activeDragRotation ? { x: originalSize.y, y: originalSize.x } : originalSize;
+    const currentSize = activeDragRotation ? { x: baseSize.y, y: baseSize.x } : baseSize;
 
     const style = {
       width: currentSize.x * SLOT_SIZE + (currentSize.x - 1) * GAP,
@@ -672,7 +1025,7 @@ function App() {
         />
         {/* Visual Hint */}
         <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 whitespace-nowrap bg-black/70 text-white text-[10px] px-2 py-1 rounded border border-white/20 flex gap-2">
-          <span><span className="font-bold text-orange-400">[F]</span> Expand/Fold</span>
+          <span><span className="font-bold text-orange-400">[F]</span> {activeDragFolded ? 'Expand' : 'Fold'}</span>
           <span><span className="font-bold text-orange-400">[R]</span> Rotate</span>
         </div>
       </div>
@@ -681,9 +1034,12 @@ function App() {
 
   const handleDragCancel = () => {
     setActiveId(null);
+    setActiveDragData(null);
     setActiveContainerId(null);
+    setActiveDragFolded(false);
     setDragHighlight(undefined);
     currentDragState.current = null;
+    setDragCompatibility(null);
   };
 
   // Check if any Loot/Stash is open
