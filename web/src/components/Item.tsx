@@ -54,18 +54,27 @@ export const ItemView: React.FC<ItemProps & {
     const toggleWindow = useInventoryStore(state => state.toggleWindow);
     const openDetails = useInventoryStore(state => state.openDetails);
     const dragCompat = useInventoryStore(state => state.dragCompatibility);
+    const setGiveTarget = useInventoryStore(state => state.setGiveTarget);
+    const activeContextMenuItemId = useInventoryStore(state => state.activeContextMenuItemId);
+    const setActiveContextMenuItemId = useInventoryStore(state => state.setActiveContextMenuItemId);
 
     // Determine if THIS item is a compatible target
     const isCompatibleTarget = dragCompat && !isDragging && !isOverlay && dragCompat.targetIds.has(props.id);
 
+    // This item's context menu is visible only when it holds the global active id
+    const showContextMenu = activeContextMenuItemId === props.id;
+
+    // When equipped, only weapons (excluding melee) show a context menu.
+    // In the grid (isEquipment=false) all items always have the menu.
+    const contextMenuAllowed = !props.isEquipment || (!!type?.startsWith('weapon_') && type !== 'weapon_melee');
+
     const [showTooltip, setShowTooltip] = useState(false);
     const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
-    const [showContextMenu, setShowContextMenu] = useState(false);
     const [contextMenuPos, setContextMenuPos] = useState({ x: 0, y: 0 });
 
     // Modal State
     const [modalOpen, setModalOpen] = useState(false);
-    const [actionType, setActionType] = useState<'drop' | 'give' | null>(null);
+    const [actionType, setActionType] = useState<'drop' | 'split' | null>(null);
 
     const handleMouseEnter = (e: React.MouseEvent) => {
         if (!isDragging && !showContextMenu && !isOverlay && !modalOpen) {
@@ -94,11 +103,11 @@ export const ItemView: React.FC<ItemProps & {
     const handleContextMenu = (e: React.MouseEvent) => {
         e.preventDefault();
         e.stopPropagation();
-        if (isOverlay || isDragging) return;
+        if (isOverlay || isDragging || !contextMenuAllowed) return;
 
         setShowTooltip(false);
         setContextMenuPos({ x: e.clientX, y: e.clientY });
-        setShowContextMenu(true);
+        setActiveContextMenuItemId(props.id); // closes any other open menu
     };
 
     const handleDoubleClick = (e: React.MouseEvent) => {
@@ -125,10 +134,10 @@ export const ItemView: React.FC<ItemProps & {
     React.useEffect(() => {
         if (isDragging) {
             setShowTooltip(false);
-            setShowContextMenu(false);
+            if (showContextMenu) setActiveContextMenuItemId(null);
             setModalOpen(false);
         }
-    }, [isDragging]);
+    }, [isDragging, showContextMenu, setActiveContextMenuItemId]);
 
     // --- Actions ---
 
@@ -136,6 +145,7 @@ export const ItemView: React.FC<ItemProps & {
         const payload = {
             item: name,
             id: props.id,
+            itemId: props.id, // For compatibility with server handlers expecting itemId
             name: name,
             slot: originalSlot || slot, // Use Original Global Slot if available
             container: containerId,
@@ -149,6 +159,9 @@ export const ItemView: React.FC<ItemProps & {
                 break;
             case 'drop':
                 fetchNui('dropItem', payload);
+                break;
+            case 'split':
+                fetchNui('splitItem', payload);
                 break;
             case 'give':
                 fetchNui('giveItem', payload);
@@ -166,13 +179,13 @@ export const ItemView: React.FC<ItemProps & {
                 console.log('Details:', payload);
                 break;
         }
-        setShowContextMenu(false);
+        setActiveContextMenuItemId(null);
     };
 
-    const initiateQuantityAction = (type: 'drop' | 'give') => {
+    const initiateQuantityAction = (type: 'drop' | 'split') => {
         setActionType(type);
         setModalOpen(true);
-        setShowContextMenu(false);
+        setActiveContextMenuItemId(null);
     };
 
     const onModalConfirm = (qty: number) => {
@@ -182,12 +195,25 @@ export const ItemView: React.FC<ItemProps & {
         setActionType(null);
     };
 
+    // Open GiveItemModal (player selection + qty combined in one modal)
+    const handleGiveItem = () => {
+        setActiveContextMenuItemId(null);
+        const itemData: any = {
+            id: props.id, name, count, label, image, type, slot,
+            description, weight, size, rotated, metadata: props.metadata
+        };
+        setGiveTarget({ item: itemData, containerId: containerId || 'player-inv' });
+    };
+
 
     // --- Context Options Construction ---
     const contextOptions = [];
 
     // [All Items]
-    contextOptions.push({ label: 'Enviar', action: () => initiateQuantityAction('give') });
+    contextOptions.push({ label: 'Dar Item', action: () => handleGiveItem() });
+    if (count > 1) {
+        contextOptions.push({ label: 'Dividir', action: () => initiateQuantityAction('split') });
+    }
     contextOptions.push({ label: 'Dropar', action: () => initiateQuantityAction('drop') }); // Supports qty
     contextOptions.push({ label: 'Detalhes', action: () => handleAction('details') });
 
@@ -263,15 +289,15 @@ export const ItemView: React.FC<ItemProps & {
                 visible={showContextMenu && !isDragging && !isOverlay}
                 position={contextMenuPos}
                 options={contextOptions}
-                onClose={() => setShowContextMenu(false)}
+                onClose={() => setActiveContextMenuItemId(null)}
             />
 
             <QuantityModal
                 isOpen={modalOpen}
                 onClose={() => setModalOpen(false)}
                 onConfirm={onModalConfirm}
-                maxQuantity={count}
-                title={actionType === 'give' ? 'Enviar Quantidade' : 'Dropar Quantidade'}
+                maxQuantity={actionType === 'split' ? count - 1 : count}
+                title={actionType === 'split' ? 'Dividir Quantidade' : 'Dropar Quantidade'}
             />
         </>
     );

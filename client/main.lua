@@ -594,3 +594,78 @@ Citizen.CreateThread(function()
         end
     end
 end)
+
+-- ============================================================
+-- Give Item to Player - Client Handlers
+-- ============================================================
+
+-- NUI: Sender opens give modal → request nearby player list from server
+RegisterNUICallback('requestNearbyPlayers', function(_, cb)
+    TriggerServerEvent('mx-inv:server:requestNearbyPlayers')
+    cb('ok')
+end)
+
+-- NUI: Sender confirms give
+RegisterNUICallback('giveItem', function(data, cb)
+    TriggerServerEvent('mx-inv:server:giveItem', data)
+    cb('ok')
+end)
+
+-- NUI: Player splits a stack
+RegisterNUICallback('splitItem', function(data, cb)
+    TriggerServerEvent('mx-inv:server:splitItem', data)
+    cb('ok')
+end)
+
+
+-- Server → Client: nearby players list (reply to requestNearbyPlayers)
+RegisterNetEvent('mx-inv:client:nearbyPlayers', function(players)
+    SendNUIMessage({ action = 'nearbyPlayers', data = players })
+end)
+
+-- Tracks whether WE opened NUI focus just for the give popup (so we don't close inventory's focus)
+local givePopupHasFocus = false
+
+local function OpenGivePopupFocus()
+    if not isInventoryOpen then
+        SetNuiFocus(true, true)
+        givePopupHasFocus = true
+    end
+end
+
+local function CloseGivePopupFocus()
+    if givePopupHasFocus then
+        givePopupHasFocus = false
+        if not isInventoryOpen then
+            SetNuiFocus(false, false)
+        end
+    end
+end
+
+-- Server → Client: incoming give request (receiver side)
+RegisterNetEvent('mx-inv:client:receiveItemRequest', function(data)
+    OpenGivePopupFocus()
+    SendNUIMessage({ action = 'receiveItemRequest', data = data })
+end)
+
+-- Server → Client: request expired (auto-dismiss receiver modal)
+RegisterNetEvent('mx-inv:client:giveRequestExpired', function()
+    CloseGivePopupFocus()
+    SendNUIMessage({ action = 'giveRequestExpired' })
+end)
+
+-- Server → Client: result/feedback for both sender and receiver
+RegisterNetEvent('mx-inv:client:giveItemResult', function(data)
+    -- Release focus when result arrives for the receiver (transferred or failed)
+    if data and (data.transferred or (not data.ok and not data.pending)) then
+        CloseGivePopupFocus()
+    end
+    SendNUIMessage({ action = 'giveItemResult', data = data })
+end)
+
+-- NUI: Target responds (accept/decline) — also close popup focus
+RegisterNUICallback('respondGiveItem', function(data, cb)
+    CloseGivePopupFocus()
+    TriggerServerEvent('mx-inv:server:respondGiveItem', data)
+    cb('ok')
+end)

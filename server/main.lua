@@ -1443,6 +1443,343 @@ RegisterCommand('debuginv', function(source, args)
     print('^3----------------------------------^0')
 end, false)
 
+-- ============================================================
+-- Split Stack
+-- ============================================================
+
+RegisterNetEvent('mx-inv:server:splitItem', function(data)
+    local src          = source
+    local itemId       = data.itemId
+    local containerId  = data.containerId
+    local amount       = tonumber(data.amount) or 0
+
+    local containerMap = Inventory[src]
+    if not containerMap then
+        print('^1[mx-inv] splitItem: No inventory for ' .. src .. '^0')
+        return
+    end
+
+    -- Resolve container key
+    local containerKey = (containerId == 'player-inv') and 'player' or containerId
+    local container    = containerMap[containerKey]
+    if not container then
+        print('^1[mx-inv] splitItem: Container not found: ' .. tostring(containerId) .. '^0')
+        return
+    end
+
+    -- Find the item
+    local targetItem  = nil
+    local targetIndex = -1
+    for i, item in ipairs(container) do
+        if item.id == itemId then
+            targetItem  = item
+            targetIndex = i
+            break
+        end
+    end
+
+    if not targetItem then
+        print('^1[mx-inv] splitItem: Item not found: ' .. tostring(itemId) .. '^0')
+        return
+    end
+
+    -- Validate: need at least 2 so we can split off ≥1
+    if targetItem.count < 2 or amount < 1 or amount >= targetItem.count then
+        print('^1[mx-inv] splitItem: Invalid amount ' .. amount .. ' for count ' .. targetItem.count .. '^0')
+        return
+    end
+
+    -- Find a free slot for the new stack
+    local itemDef  = ItemDefs[targetItem.name]
+    local itemSize = (itemDef and itemDef.size) or { x = 1, y = 1 }
+    local freeSlot = FindFreeSlot(container, itemSize)
+    if not freeSlot then
+        print('^1[mx-inv] splitItem: No free slot in container ' .. tostring(containerId) .. '^0')
+        TriggerClientEvent('mx-inv:client:notify', src, 'Inventário sem espaço para dividir.')
+        return
+    end
+
+    -- Atomically reduce original and create split stack
+    targetItem.count = targetItem.count - amount
+
+    local newStack = {
+        name     = targetItem.name,
+        count    = amount,
+        slot     = freeSlot,
+        id       = GenerateUUID(),
+        metadata = targetItem.metadata -- share metadata (e.g. caliber)
+    }
+    table.insert(container, newStack)
+
+    print('^2[mx-inv] splitItem: ' .. src .. ' split ' .. amount .. 'x ' .. targetItem.name
+        .. ' | New id=' .. newStack.id .. '^0')
+
+    -- Save + Refresh
+    local player = MX_GetPlayer(src)
+    if player then DB.SavePlayer(player.identifier, containerMap) end
+    UpdateClientInventory(src)
+end)
+
+-- ============================================================
+-- Give Item to Player System
+-- ============================================================
+
+local GIVE_MAX_DISTANCE = 3.0   -- metres (server-side check)
+local GIVE_TIMEOUT_MS   = 30000 -- 30 seconds
+
+-- Pending give requests: pendingGives[targetSrc] = { fromSrc, itemId, itemName, containerId, count, timer }
+local pendingGives      = {}
+
+-- Helper: Remove a pending give and cancel its timeout
+local function CancelPendingGive(targetSrc)
+    local pending = pendingGives[targetSrc]
+    if pending then
+        if pending.timer then
+            ClearTimeout(pending.timer)
+        end
+        pendingGives[targetSrc] = nil
+    end
+end
+
+-- Helper: Remove `count` of an item by id from a player's inventory (returns the removed item obj or nil)
+local function RemoveItemById(containerMap, itemId, count)
+    -- Search all containers except equipment map
+    local containers = { containerMap.player }
+    for k, v in pairs(containerMap) do
+        if k ~= 'player' and k ~= 'equipment' and type(v) == 'table' and #v > 0 then
+            table.insert(containers, v)
+        end
+    end
+
+    for _, container in ipairs(containers) do
+        for i, item in ipairs(container) do
+            if item.id == itemId then
+                if item.count > count then
+                    -- Partial remove
+                    item.count = item.count - count
+                    -- Return a copy representing the given portion
+                    return { name = item.name, count = count, id = GenerateUUID(), slot = { x = 1, y = 1 } }
+                else
+                    -- Full remove
+                    local removed = table.remove(container, i)
+                    removed.count = count -- clamp
+                    return removed
+                end
+            end
+        end
+    end
+    return nil
+end
+
+-- Event: Sender opens the give dialog → server returns nearby players and validates
+RegisterNetEvent('mx-inv:server:requestNearbyPlayers', function()
+    local src = source
+    local srcCoords = GetEntityCoords(GetPlayerPed(src))
+    local nearby = {}
+
+    for _, playerId in ipairs(GetPlayers()) do
+        local pid = tonumber(playerId)
+        if pid ~= src then
+            local otherCoords = GetEntityCoords(GetPlayerPed(pid))
+            local dist = #(srcCoords - otherCoords)
+            if dist <= 10.0 then -- wider radius for selection list
+                local player = MX_GetPlayer(pid)
+                local name = player and player.name or ('Player ' .. pid)
+                table.insert(nearby, { id = pid, name = name, distance = math.floor(dist * 10) / 10 })
+            end
+        end
+    end
+
+    TriggerClientEvent('mx-inv:client:nearbyPlayers', src, nearby)
+end)
+
+-- Event: Sender confirms give (item + count + target)
+RegisterNetEvent('mx-inv:server:giveItem', function(data)
+    local src         = source
+    local targetSrc   = tonumber(data.targetSrc)
+    local itemId      = data.itemId
+    local itemName    = data.itemName
+    local containerId = data.containerId
+    local count       = tonumber(data.count) or 1
+
+    -- Basic validation
+    if not targetSrc or not itemId or not itemName or count <= 0 then
+        TriggerClientEvent('mx-inv:client:giveItemResult', src, { ok = false, reason = 'Dados inválidos.' })
+        return
+    end
+
+    if not Inventory[src] then
+        TriggerClientEvent('mx-inv:client:giveItemResult', src, { ok = false, reason = 'Inventário não carregado.' })
+        return
+    end
+
+    if not Inventory[targetSrc] then
+        TriggerClientEvent('mx-inv:client:giveItemResult', src,
+            { ok = false, reason = 'Jogador alvo não está disponível.' })
+        return
+    end
+
+    -- Distance check (server-authoritative)
+    local srcCoords    = GetEntityCoords(GetPlayerPed(src))
+    local targetCoords = GetEntityCoords(GetPlayerPed(targetSrc))
+    local dist         = #(srcCoords - targetCoords)
+    if dist > GIVE_MAX_DISTANCE then
+        TriggerClientEvent('mx-inv:client:giveItemResult', src, { ok = false, reason = 'Jogador muito longe.' })
+        return
+    end
+
+    -- Verify item exists in sender inventory
+    local containerMap = Inventory[src]
+    local itemFound = false
+    local allContainers = { containerMap.player }
+    for k, v in pairs(containerMap) do
+        if k ~= 'player' and k ~= 'equipment' and type(v) == 'table' then
+            table.insert(allContainers, v)
+        end
+    end
+    for _, container in ipairs(allContainers) do
+        for _, item in ipairs(container) do
+            if item.id == itemId and item.count >= count then
+                itemFound = true
+                break
+            end
+        end
+        if itemFound then break end
+    end
+
+    if not itemFound then
+        TriggerClientEvent('mx-inv:client:giveItemResult', src,
+            { ok = false, reason = 'Item não encontrado ou quantidade insuficiente.' })
+        return
+    end
+
+    -- Cancel any previous pending give to this target
+    CancelPendingGive(targetSrc)
+
+    -- Store pending request
+    local senderPlayer = MX_GetPlayer(src)
+    local senderName = senderPlayer and senderPlayer.name or ('Player ' .. src)
+    local itemDef = ItemDefs[itemName]
+    local itemLabel = (itemDef and itemDef.label) or itemName
+
+    -- Create timeout to auto-cancel after GIVE_TIMEOUT_MS
+    local timeoutFn = Citizen.SetTimeout(GIVE_TIMEOUT_MS, function()
+        if pendingGives[targetSrc] and pendingGives[targetSrc].fromSrc == src then
+            pendingGives[targetSrc] = nil
+            TriggerClientEvent('mx-inv:client:giveItemResult', src,
+                { ok = false, reason = 'Tempo esgotado. O jogador não respondeu.' })
+            TriggerClientEvent('mx-inv:client:giveRequestExpired', targetSrc)
+            print('^3[mx-inv] Give request from ' .. src .. ' to ' .. targetSrc .. ' timed out.^0')
+        end
+    end)
+
+    pendingGives[targetSrc] = {
+        fromSrc     = src,
+        itemId      = itemId,
+        itemName    = itemName,
+        containerId = containerId,
+        count       = count,
+        timer       = timeoutFn
+    }
+
+    print('^3[mx-inv] Give request: ' .. src .. ' -> ' .. targetSrc .. ' | ' .. count .. 'x ' .. itemName .. '^0')
+
+    -- Notify target
+    TriggerClientEvent('mx-inv:client:receiveItemRequest', targetSrc, {
+        fromSrc   = src,
+        fromName  = senderName,
+        itemName  = itemName,
+        itemLabel = itemLabel,
+        count     = count,
+        image     = itemDef and itemDef.image or nil
+    })
+
+    -- Notify sender to wait
+    TriggerClientEvent('mx-inv:client:giveItemResult', src, { ok = true, pending = true })
+end)
+
+-- Event: Target accepts or declines
+RegisterNetEvent('mx-inv:server:respondGiveItem', function(data)
+    local targetSrc = source
+    local accepted  = data.accepted == true
+
+    local pending   = pendingGives[targetSrc]
+    if not pending then
+        TriggerClientEvent('mx-inv:client:giveItemResult', targetSrc,
+            { ok = false, reason = 'Nenhuma solicitação pendente.' })
+        return
+    end
+
+    local fromSrc = pending.fromSrc
+    CancelPendingGive(targetSrc)
+
+    if not accepted then
+        -- Declined
+        TriggerClientEvent('mx-inv:client:giveItemResult', fromSrc, { ok = false, reason = 'O jogador recusou o item.' })
+        TriggerClientEvent('mx-inv:client:giveItemResult', targetSrc, { ok = false, reason = 'Você recusou o item.' })
+        print('^3[mx-inv] Give declined: ' .. fromSrc .. ' -> ' .. targetSrc .. '^0')
+        return
+    end
+
+    -- Validate both inventories still loaded
+    if not Inventory[fromSrc] or not Inventory[targetSrc] then
+        TriggerClientEvent('mx-inv:client:giveItemResult', fromSrc, { ok = false, reason = 'Inventário não disponível.' })
+        TriggerClientEvent('mx-inv:client:giveItemResult', targetSrc,
+            { ok = false, reason = 'Inventário não disponível.' })
+        return
+    end
+
+    -- Re-check distance
+    local srcCoords    = GetEntityCoords(GetPlayerPed(fromSrc))
+    local targetCoords = GetEntityCoords(GetPlayerPed(targetSrc))
+    if #(srcCoords - targetCoords) > GIVE_MAX_DISTANCE then
+        TriggerClientEvent('mx-inv:client:giveItemResult', fromSrc, { ok = false, reason = 'Vocês se afastaram muito.' })
+        TriggerClientEvent('mx-inv:client:giveItemResult', targetSrc,
+            { ok = false, reason = 'Vocês se afastaram muito.' })
+        return
+    end
+
+    -- Atomic transfer: remove from source, add to target
+    local removedItem = RemoveItemById(Inventory[fromSrc], pending.itemId, pending.count)
+    if not removedItem then
+        TriggerClientEvent('mx-inv:client:giveItemResult', fromSrc,
+            { ok = false, reason = 'Item não encontrado no inventário.' })
+        TriggerClientEvent('mx-inv:client:giveItemResult', targetSrc, { ok = false, reason = 'Falha ao receber o item.' })
+        return
+    end
+
+    local added, addMsg = AddItem(targetSrc, removedItem.name, removedItem.count)
+    if not added then
+        -- Rollback: give item back to source
+        AddItem(fromSrc, removedItem.name, removedItem.count)
+        TriggerClientEvent('mx-inv:client:giveItemResult', fromSrc, { ok = false, reason = 'Inventário do alvo cheio.' })
+        TriggerClientEvent('mx-inv:client:giveItemResult', targetSrc,
+            { ok = false, reason = 'Seu inventário está cheio.' })
+        return
+    end
+
+    -- Save both players
+    local fromPlayer   = MX_GetPlayer(fromSrc)
+    local targetPlayer = MX_GetPlayer(targetSrc)
+    if fromPlayer then DB.SavePlayer(fromPlayer.identifier, Inventory[fromSrc]) end
+    if targetPlayer then DB.SavePlayer(targetPlayer.identifier, Inventory[targetSrc]) end
+
+    -- Refresh both UIs
+    UpdateClientInventory(fromSrc)
+    UpdateClientInventory(targetSrc)
+
+    local itemDef = ItemDefs[pending.itemName]
+    local itemLabel = (itemDef and itemDef.label) or pending.itemName
+
+    TriggerClientEvent('mx-inv:client:giveItemResult', fromSrc,
+        { ok = true, transferred = true, message = 'Você enviou ' .. pending.count .. 'x ' .. itemLabel .. '.' })
+    TriggerClientEvent('mx-inv:client:giveItemResult', targetSrc,
+        { ok = true, transferred = true, message = 'Você recebeu ' .. pending.count .. 'x ' .. itemLabel .. '.' })
+
+    print('^2[mx-inv] Give success: ' ..
+        fromSrc .. ' -> ' .. targetSrc .. ' | ' .. pending.count .. 'x ' .. pending.itemName .. '^0')
+end)
+
 -- Hotbar Shortcut Event
 RegisterNetEvent('mx-inv:server:useHotbar', function(slotIndex)
     local src = source

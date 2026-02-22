@@ -91,6 +91,12 @@ interface InventoryState {
     openDetails: (item: Item) => void;
     closeDetails: (item: Item) => void;
 
+    // Give Item
+    giveTarget: { item: Item; containerId: string } | null;
+    setGiveTarget: (data: { item: Item; containerId: string } | null) => void;
+    receiveRequest: { fromSrc: number; fromName: string; itemName: string; itemLabel: string; count: number; image?: string } | null;
+    setReceiveRequest: (data: { fromSrc: number; fromName: string; itemName: string; itemLabel: string; count: number; image?: string } | null) => void;
+
     // Shortcuts
     shortcuts: Record<string, string | null>; // key -> itemName
     hoveredItem: { name: string, containerId: string } | null;
@@ -101,6 +107,10 @@ interface InventoryState {
     // Drag Compatibility Highlights
     dragCompatibility: { targetIds: Set<string>; dragType: 'ammo' | 'attachment' | 'stack' | null } | null;
     setDragCompatibility: (data: { targetIds: Set<string>; dragType: 'ammo' | 'attachment' | 'stack' } | null) => void;
+
+    // Context Menu (only one open at a time)
+    activeContextMenuItemId: string | null;
+    setActiveContextMenuItemId: (id: string | null) => void;
 }
 
 // No helpers needed currently
@@ -210,6 +220,16 @@ export const useInventoryStore = create<InventoryState>((set) => ({
     closeDetails: (item: Item) => set((state) => ({
         detailsWindows: state.detailsWindows.filter(i => i.name !== item.name)
     })),
+
+    // Give Item state
+    giveTarget: null,
+    setGiveTarget: (data) => set({ giveTarget: data }),
+    receiveRequest: null,
+    setReceiveRequest: (data) => set({ receiveRequest: data }),
+
+    // Context Menu
+    activeContextMenuItemId: null,
+    setActiveContextMenuItemId: (id) => set({ activeContextMenuItemId: id }),
 
     setEquipment: (data: Record<string, Item | null>) => set({ equipment: data }),
 

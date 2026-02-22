@@ -12,6 +12,7 @@ import { ITEM_CONFIGS } from './config/items';
 import { DndContext, type DragEndEvent, type DragMoveEvent, useSensor, useSensors, PointerSensor, rectIntersection, DragOverlay } from '@dnd-kit/core';
 import { PlayerInventory } from './components/PlayerInventory';
 import { StashInventory } from './components/StashInventory';
+import { GiveItemModal } from './components/GiveItemModal';
 
 // Mock data
 interface WeightUpdate {
@@ -31,7 +32,8 @@ function App() {
   const {
     isOpen, setOpen, setContainerData, moveItem, containers, updateContainerWeight,
     equipment, setEquipment, equipItem, unequipItem, swapEquipment, loadAmmoIntoWeapon, toggleItemFold, setContainers,
-    openWindows, closeWindow, detailsWindows, closeDetails, attachToWeapon, stackItems, setDragCompatibility
+    openWindows, closeWindow, detailsWindows, closeDetails, attachToWeapon, stackItems, setDragCompatibility,
+    giveTarget, setGiveTarget, receiveRequest, setReceiveRequest
   } = useInventoryStore();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [activeDragData, setActiveDragData] = useState<any | null>(null);
@@ -156,6 +158,8 @@ function App() {
 
       if (action === 'close') {
         setOpen(false);
+        setGiveTarget(null);
+        useInventoryStore.setState({ detailsWindows: [] });
       } else if (action === 'updateWeaponAmmo') {
         const { weaponSlot, totalAmmo, clipAmmo } = data;
         useInventoryStore.getState().updateWeaponAmmo(weaponSlot, totalAmmo, clipAmmo);
@@ -164,6 +168,12 @@ function App() {
         Object.entries(weights).forEach(([id, weight]) => {
           updateContainerWeight(id, weight);
         });
+      } else if (action === 'receiveItemRequest') {
+        // Incoming give request from another player
+        useInventoryStore.getState().setReceiveRequest(data);
+      } else if (action === 'giveRequestExpired') {
+        // Auto-close receiver modal on timeout
+        useInventoryStore.getState().setReceiveRequest(null);
       }
     };
 
@@ -1045,53 +1055,63 @@ function App() {
   // Check if any Loot/Stash is open
   const isStashOpen = Object.values(containers).some((c: any) => c.id.startsWith('drop-') || c.id.startsWith('stash-'));
 
-  if (!isOpen) return null;
-
   return (
-    <DndContext
-      sensors={sensors}
-      collisionDetection={rectIntersection}
-      onDragStart={handleDragStart}
-      onDragMove={handleDragMove}
-      onDragEnd={handleDragEnd}
-      onDragCancel={handleDragCancel}
-    >
-      <div className="flex items-center min-h-screen w-full max-w-[1920px] h-full text-white font-sans selection:bg-orange-500/30 p-10 transition-all duration-500 ease-in-out">
-        <div className={`flex justify-end w-full h-[85vh] gap-6 ${isStashOpen ? 'px-18' : 'px-35'}`}>
-          {/* LEFT: Equipment */}
-          <EquipmentPanel />
+    <>
+      {/* Give Item Modal — rendered outside DndContext so it isn't blocked by drag events */}
+      <GiveItemModal
+        giveTarget={giveTarget}
+        onCloseSend={() => setGiveTarget(null)}
+        receiveRequest={receiveRequest}
+        onCloseReceive={() => setReceiveRequest(null)}
+      />
 
-          {/* CENTER: Player Inventory (Grids) */}
-          <PlayerInventory dragHighlight={dragHighlight} />
+      {!isOpen ? null : (
+        <DndContext
+          sensors={sensors}
+          collisionDetection={rectIntersection}
+          onDragStart={handleDragStart}
+          onDragMove={handleDragMove}
+          onDragEnd={handleDragEnd}
+          onDragCancel={handleDragCancel}
+        >
+          <div className="flex items-center min-h-screen w-full max-w-[1920px] h-full text-white font-sans selection:bg-orange-500/30 p-10 transition-all duration-500 ease-in-out">
+            <div className={`flex justify-end w-full h-[85vh] gap-6 ${isStashOpen ? 'px-18' : 'px-35'}`}>
+              {/* LEFT: Equipment */}
+              <EquipmentPanel />
 
-          {/* RIGHT: Loot / Stash / Storage */}
-          {isStashOpen && (
-            <StashInventory dragHighlight={dragHighlight} />
-          )}
-        </div>
-        {/* Floating Container Windows */}
-        {openWindows.map(id => (
-          <ContainerWindow
-            key={id}
-            containerId={id}
-            onClose={() => closeWindow(id)}
-          />
-        ))}
+              {/* CENTER: Player Inventory (Grids) */}
+              <PlayerInventory dragHighlight={dragHighlight} />
 
-        {/* Item Details Window */}
-        {detailsWindows.map((item) => (
-          <ItemDetailsWindow
-            key={item.name}
-            item={item}
-            onClose={() => closeDetails(item)}
-          />
-        ))}
+              {/* RIGHT: Loot / Stash / Storage */}
+              {isStashOpen && (
+                <StashInventory dragHighlight={dragHighlight} />
+              )}
+            </div>
+            {/* Floating Container Windows */}
+            {openWindows.map(id => (
+              <ContainerWindow
+                key={id}
+                containerId={id}
+                onClose={() => closeWindow(id)}
+              />
+            ))}
 
-      </div>
-      <DragOverlay modifiers={[snapCenterToCursor]}>
-        {activeId ? renderDragOverlay() : null}
-      </DragOverlay>
-    </DndContext >
+            {/* Item Details Window */}
+            {detailsWindows.map((item) => (
+              <ItemDetailsWindow
+                key={item.name}
+                item={item}
+                onClose={() => closeDetails(item)}
+              />
+            ))}
+
+          </div>
+          <DragOverlay modifiers={[snapCenterToCursor]}>
+            {activeId ? renderDragOverlay() : null}
+          </DragOverlay>
+        </DndContext>
+      )}
+    </>
   );
 }
 
