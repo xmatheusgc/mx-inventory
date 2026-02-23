@@ -8,6 +8,7 @@ Items = {
         size = { x = 1, y = 2 },
         type = "generic",
         image = "water.png",
+        dropProp = "prop_ld_flow_bottle",
         consume = {
             type = "drink",
             animDict = "mp_player_intdrink",
@@ -22,6 +23,7 @@ Items = {
         size = { x = 1, y = 1 },
         type = "generic",
         image = "bread.png",
+        dropProp = "prop_sandwich_01",
         consume = {
             type = "eat",
             animDict = "mp_player_inteat@burger",
@@ -49,6 +51,7 @@ Items = {
         size = { x = 2, y = 1 },
         type = "weapon_pistol",
         image = "pistol.png",
+        dropProp = "w_pi_pistol",
         equipment = {
             weaponHash = "WEAPON_PISTOL",
             caliber = "ammo_9mm",
@@ -67,6 +70,7 @@ Items = {
         size = { x = 4, y = 2 },
         type = "weapon_rifle",
         image = "rifle.png",
+        dropProp = "w_ar_assaultrifle",
         equipment = {
             weaponHash = "WEAPON_ASSAULTRIFLE",
             caliber = "ammo_556",
@@ -87,6 +91,7 @@ Items = {
         size = { x = 4, y = 2 },
         type = "weapon_shotgun",
         image = "shotgun.png",
+        dropProp = "w_sg_pumpshotgun",
         equipment = {
             weaponHash = "WEAPON_PUMPSHOTGUN",
             caliber = "ammo_12gauge",
@@ -110,7 +115,6 @@ Items = {
     },
 
     -- ============================================================
-    -- ============================================================
     -- AMMUNITION (stackable, max 150)
     -- ============================================================
     ['ammo_9mm'] = {
@@ -119,6 +123,7 @@ Items = {
         size = { x = 1, y = 1 },
         type = "ammo",
         image = "ammo_9mm.png",
+        dropProp = "prop_ld_ammo_pack_01",
         stackable = true,
         maxStack = 150,
         ammo = {

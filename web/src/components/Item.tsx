@@ -78,10 +78,15 @@ export const ItemView: React.FC<ItemProps & {
 
     const handleMouseEnter = (e: React.MouseEvent) => {
         if (!isDragging && !showContextMenu && !isOverlay && !modalOpen) {
+            console.log('[DEBUG] Hover started:', name, props.id);
             setShowTooltip(true);
             setTooltipPos({ x: e.clientX, y: e.clientY });
-            // Set global hovered item for shortcuts
-            useInventoryStore.getState().setHoveredItem({ name: props.name, containerId: props.containerId || 'unknown' });
+            // Reconstruct item object for shortcuts
+            const itemData: any = {
+                id: props.id, name, count, label, image, type, slot,
+                description, weight, size, rotated, metadata: props.metadata
+            };
+            useInventoryStore.getState().setHoveredItem({ item: itemData, containerId: props.containerId || 'unknown' });
         }
     };
 
@@ -92,10 +97,11 @@ export const ItemView: React.FC<ItemProps & {
     };
 
     const handleMouseLeave = () => {
+        console.log('[DEBUG] Hover ended:', name, props.id);
         setShowTooltip(false);
         // Clear global hovered item
         const currentHover = useInventoryStore.getState().hoveredItem;
-        if (currentHover?.name === props.name) {
+        if (currentHover?.item.id === props.id) {
             useInventoryStore.getState().setHoveredItem(null);
         }
     };

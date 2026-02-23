@@ -13,6 +13,7 @@ import { DndContext, type DragEndEvent, type DragMoveEvent, useSensor, useSensor
 import { PlayerInventory } from './components/PlayerInventory';
 import { StashInventory } from './components/StashInventory';
 import { GiveItemModal } from './components/GiveItemModal';
+import { InventoryNotification } from './components/InventoryNotification';
 
 // Mock data
 interface WeightUpdate {
@@ -33,7 +34,7 @@ function App() {
     isOpen, setOpen, setContainerData, moveItem, containers, updateContainerWeight,
     equipment, setEquipment, equipItem, unequipItem, swapEquipment, loadAmmoIntoWeapon, toggleItemFold, setContainers,
     openWindows, closeWindow, detailsWindows, closeDetails, attachToWeapon, stackItems, setDragCompatibility,
-    giveTarget, setGiveTarget, receiveRequest, setReceiveRequest
+    giveTarget, setGiveTarget, receiveRequest, setReceiveRequest, addNotification
   } = useInventoryStore();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [activeDragData, setActiveDragData] = useState<any | null>(null);
@@ -75,6 +76,12 @@ function App() {
     const handleMessage = (event: MessageEvent) => {
       const { action, data } = event.data;
       // console.log('NUI Message:', action, data);
+
+      if (action === 'notify') {
+        if (data) {
+          addNotification(data.message, data.type, data.duration);
+        }
+      }
 
       if (action === 'open' || action === 'update') {
         if (data) {
@@ -196,6 +203,7 @@ function App() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      console.log('[DEBUG] App: KeyDown:', e.key);
       if (['5', '6', '7', '8'].includes(e.key)) {
         useInventoryStore.getState().setShortcut(e.key);
       }
@@ -203,6 +211,24 @@ function App() {
       if (e.key === 'Escape') {
         fetchNui('close');
         setOpen(false);
+      }
+
+      if (e.key.toLowerCase() === 'x') {
+        const hovered = useInventoryStore.getState().hoveredItem;
+        console.log('X pressed. Hovered:', hovered);
+        if (hovered && hovered.item) {
+          console.log('Sending dropItem for:', hovered.item.name);
+          fetchNui('dropItem', {
+            itemId: hovered.item.id,
+            item: hovered.item.name,
+            name: hovered.item.name,
+            amount: hovered.item.count,
+            containerId: hovered.containerId,
+            slot: hovered.item.slot
+          });
+          // Optimistically clear hovered state
+          useInventoryStore.getState().setHoveredItem(null);
+        }
       }
       // Keyboard Listeners (Rotate R, Fold F)
       if (!activeId) return;
@@ -429,6 +455,20 @@ function App() {
 
   const validatePlacement = useCallback((rawContainerId: string, item: any, relativeSlot: { x: number; y: number }, rotation: boolean) => {
     const { baseId, regionOffset, pocketRegion } = parseContainerId(rawContainerId);
+
+    // -- EQUIPMENT VALIDATION: Prevent Duplicate Weapons (Frontend) --
+    if (baseId.startsWith('equip-')) {
+      const slotId = baseId.replace('equip-', '');
+      if (slotId === 'primary' || slotId === 'secondary') {
+        const otherSlot = slotId === 'primary' ? 'secondary' : 'primary';
+        const currentOther = equipment[otherSlot];
+        // If the other slot has the same weapon type, it's invalid
+        if (currentOther && currentOther.name === item.name) {
+          return false;
+        }
+      }
+    }
+
     const container = containers[baseId];
     if (!container) return false;
 
@@ -1105,6 +1145,13 @@ function App() {
               />
             ))}
 
+            <GiveItemModal
+              giveTarget={giveTarget}
+              onCloseSend={() => setGiveTarget(null)}
+              receiveRequest={receiveRequest}
+              onCloseReceive={() => setReceiveRequest(null)}
+            />
+            <InventoryNotification />
           </div>
           <DragOverlay modifiers={[snapCenterToCursor]}>
             {activeId ? renderDragOverlay() : null}

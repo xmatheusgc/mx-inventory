@@ -1,6 +1,23 @@
 local isInventoryOpen = false
 local lastAmmoCache = {}
 
+-- Helper: Play Animation
+local function PlayInventoryAnim(type)
+    local anim = Config.Inventory.Animations[type]
+    if not anim then return end
+
+    RequestAnimDict(anim.dict)
+    local timeout = GetGameTimer() + 2000
+    while not HasAnimDictLoaded(anim.dict) and GetGameTimer() < timeout do Wait(0) end
+
+    if not HasAnimDictLoaded(anim.dict) then
+        print('[mx-inv] Error: Could not load anim dict: ' .. tostring(anim.dict))
+        return
+    end
+
+    TaskPlayAnim(PlayerPedId(), anim.dict, anim.anim, 8.0, -8.0, 2000, 48, 0, false, false, false)
+end
+
 RegisterCommand('inventory', function()
     if not isInventoryOpen then
         local ped = PlayerPedId()
@@ -297,9 +314,11 @@ end)
 
 -- Handle Equipping Item (From NUI)
 RegisterNUICallback('equipItem', function(data, cb)
-    print('[mx-inv] Debug Client: Requesting Equip Item: ' .. data.item .. ' to slot: ' .. data.slot)
+    print('[mx-inv] Debug Client: Requesting Equip Item: ' ..
+        data.item .. ' (ID: ' .. tostring(data.id) .. ') to slot: ' .. data.slot)
     TriggerServerEvent('mx-inv:server:moveItem', {
         item = data.item,
+        id = data.id,
         from = data.from,
         to = 'equip-' .. data.slot,
         slot = {} -- Not needed for equip
@@ -309,9 +328,11 @@ end)
 
 -- Handle Unequipping Item (From NUI)
 RegisterNUICallback('unequipItem', function(data, cb)
-    print('[mx-inv] Debug Client: Requesting Unequip Item: ' .. data.item .. ' from slot: ' .. data.fromSlot)
+    print('[mx-inv] Debug Client: Requesting Unequip Item: ' ..
+        data.item .. ' (ID: ' .. tostring(data.id) .. ') from slot: ' .. data.fromSlot)
     TriggerServerEvent('mx-inv:server:moveItem', {
         item = data.item,
+        id = data.id,
         from = 'equip-' .. data.fromSlot,
         to = data.to,
         slot = data.slot,    -- Target slot in inventory
@@ -361,7 +382,7 @@ end)
 -- Handle Unload Weapon (From NUI Context Menu)
 RegisterNUICallback('unloadItem', function(data, cb)
     print('[mx-inv] Debug Client: Requesting Unload Item: ' ..
-        tostring(data.name) .. ' from container ' .. tostring(data.containerId))
+        tostring(data.name) .. ' (ID: ' .. tostring(data.id) .. ') from container ' .. tostring(data.containerId))
     TriggerServerEvent('mx-inv:server:unloadWeapon', {
         id = data.id,
         name = data.name,
@@ -369,6 +390,26 @@ RegisterNUICallback('unloadItem', function(data, cb)
         slot = data.slot
     })
     cb('ok')
+end)
+
+-- Generic Notification
+RegisterNetEvent('mx-inv:client:notify', function(msg, type, duration)
+    -- Internal UI Notification
+    SendNUIMessage({
+        action = 'notify',
+        data = {
+            message = msg,
+            type = type or 'info',
+            duration = duration or 3000
+        }
+    })
+
+    -- If no bridge notification, use chat (optional fallback)
+    TriggerEvent('chat:addMessage', {
+        color = { 255, 0, 0 },
+        multiline = true,
+        args = { "Sistema", msg }
+    })
 end)
 
 -- Handle Attach Item to Weapon (From NUI Drag-and-Drop)
@@ -617,11 +658,34 @@ RegisterNUICallback('splitItem', function(data, cb)
     cb('ok')
 end)
 
+-- NUI: Player drops an item
+RegisterNUICallback('dropItem', function(data, cb)
+    cb('ok')
+    print('[mx-inv] NUI Callback: dropItem triggered for ' .. tostring(data.name or data.item))
+
+    Citizen.CreateThread(function()
+        PlayInventoryAnim('Drop')
+    end)
+
+    TriggerServerEvent('mx-inv:server:dropItem', data)
+end)
+
+
+-- Server → Client: world drops sync
+local worldDrops = {}
+RegisterNetEvent('mx-inv:client:syncDrops', function(drops)
+    worldDrops = drops
+end)
+
+-- Request initial drops on start
+TriggerServerEvent('mx-inv:server:requestDrops')
+
 
 -- Server → Client: nearby players list (reply to requestNearbyPlayers)
 RegisterNetEvent('mx-inv:client:nearbyPlayers', function(players)
     SendNUIMessage({ action = 'nearbyPlayers', data = players })
 end)
+
 
 -- Tracks whether WE opened NUI focus just for the give popup (so we don't close inventory's focus)
 local givePopupHasFocus = false
@@ -641,6 +705,104 @@ local function CloseGivePopupFocus()
         end
     end
 end
+-- Helper: Draw 3D Text
+local function DrawText3D(coords, text)
+    local onScreen, _x, _y = World3dToScreen2d(coords.x, coords.y, coords.z)
+    if onScreen then
+        SetTextScale(0.35, 0.35)
+        SetTextFont(4)
+        SetTextProportional(1)
+        SetTextColour(255, 255, 255, 215)
+        SetTextEntry("STRING")
+        SetTextCentre(1)
+        AddTextComponentString(text)
+        DrawText(_x, _y)
+        local factor = (string.len(text)) / 370
+        DrawRect(_x, _y + 0.0125, 0.015 + factor, 0.03, 41, 11, 41, 68)
+    end
+end
+
+-- World Drops Management
+local localProps = {} -- dropId -> entity
+
+-- Thread: Spawn/Despawn props based on distance
+Citizen.CreateThread(function()
+    while true do
+        local ped = PlayerPedId()
+        local coords = GetEntityCoords(ped)
+
+        for id, drop in pairs(worldDrops) do
+            local dist = #(coords - vector3(drop.coords.x, drop.coords.y, drop.coords.z))
+
+            if dist < 20.0 and not localProps[id] then
+                -- Spawn local prop
+                local model = GetHashKey(drop.prop)
+                RequestModel(model)
+                while not HasModelLoaded(model) do Wait(0) end
+
+                local prop = CreateObject(model, drop.coords.x, drop.coords.y, drop.coords.z, false, false, false)
+                SetEntityCollision(prop, false, false)
+                PlaceObjectOnGroundProperly(prop)
+
+                -- Rotate weapons to lie flat
+                if drop.type and (string.match(drop.type, 'weapon_') or drop.type == 'weapon') and drop.type ~= 'weapon_melee' then
+                    SetEntityRotation(prop, 90.0, 0.0, GetEntityHeading(prop), 2, true)
+                end
+
+                FreezeEntityPosition(prop, true)
+                localProps[id] = prop
+            elseif dist > 20.0 and localProps[id] then
+                -- Despawn
+                DeleteObject(localProps[id])
+                localProps[id] = nil
+            end
+        end
+
+        -- Cleanup untracked props (removed from worldDrops)
+        for id, prop in pairs(localProps) do
+            if not worldDrops[id] then
+                DeleteObject(prop)
+                localProps[id] = nil
+            end
+        end
+
+        Wait(1000)
+    end
+end)
+
+-- Thread: Interaction & Pickup
+local isProcessingPickup = false
+Citizen.CreateThread(function()
+    while true do
+        local sleep = 1000
+        local ped = PlayerPedId()
+        local coords = GetEntityCoords(ped)
+
+        for id, drop in pairs(worldDrops) do
+            local dist = #(coords - vector3(drop.coords.x, drop.coords.y, drop.coords.z))
+
+            if dist < 2.0 then
+                sleep = 0
+                DrawText3D(drop.coords, "[" .. drop.count .. "x] " .. drop.label .. " ~n~~g~[E]~w~ Pegar")
+
+                if IsControlJustPressed(0, 38) and not isProcessingPickup then -- E key
+                    isProcessingPickup = true
+                    PlayInventoryAnim('Pickup')
+                    Wait(500)
+                    TriggerServerEvent('mx-inv:server:pickupItem', id)
+
+                    -- Small delay to prevent spamming picks
+                    Citizen.CreateThread(function()
+                        Wait(1000)
+                        isProcessingPickup = false
+                    end)
+                end
+            end
+        end
+
+        Wait(sleep)
+    end
+end)
 
 -- Server → Client: incoming give request (receiver side)
 RegisterNetEvent('mx-inv:client:receiveItemRequest', function(data)

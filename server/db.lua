@@ -20,6 +20,13 @@ function DB.Init()
                 `inventory` longtext DEFAULT NULL,
                 PRIMARY KEY (`name`)
             )
+        ]],
+        [[
+            CREATE TABLE IF NOT EXISTS `mx_inventory_drops` (
+                `id` varchar(60) NOT NULL,
+                `data` longtext DEFAULT NULL,
+                PRIMARY KEY (`id`)
+            )
         ]]
     }
 
@@ -78,4 +85,30 @@ function DB.SaveStash(name, inventoryData)
             jsonInventory,
             jsonInventory
         })
+end
+
+-- Drops Management (Async)
+function DB.LoadDrops()
+    local result = MySQL.query.await('SELECT data FROM mx_inventory_drops')
+    local drops = {}
+    if result then
+        for _, row in ipairs(result) do
+            local data = json.decode(row.data)
+            drops[data.id] = data
+        end
+    end
+    return drops
+end
+
+function DB.SaveDrop(id, dropData)
+    local jsonData = json.encode(dropData)
+    MySQL.prepare.await('INSERT INTO mx_inventory_drops (id, data) VALUES (?, ?) ON DUPLICATE KEY UPDATE data = ?', {
+        id,
+        jsonData,
+        jsonData
+    })
+end
+
+function DB.DeleteDrop(id)
+    MySQL.prepare.await('DELETE FROM mx_inventory_drops WHERE id = ?', { id })
 end

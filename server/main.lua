@@ -5,6 +5,15 @@ local ItemDefs = Items -- data/items.lua loaded via fxmanifest
 -- Initialize Database
 Citizen.CreateThread(function()
     DB.Init()
+    -- Sync existing drops from DB
+    while not DB.Ready do Wait(100) end
+    worldDrops = DB.LoadDrops()
+
+    local count = 0
+    if worldDrops then
+        for _ in pairs(worldDrops) do count = count + 1 end
+    end
+    print('^2[mx-inv] Loaded ' .. count .. ' world drops.^0')
 end)
 
 local Inventory = {}
@@ -32,16 +41,19 @@ local function GetContainerWeight(items)
     return total
 end
 
--- Helper: Find Free Slot
-local function FindFreeSlot(container, itemSize)
-    -- Map taken slots
+-- Helper: Find Free Slot (with Rotation Support)
+local function FindFreeSlot(container, itemSize, width, height)
+    width = width or Config.Inventory.Slots.width
+    height = height or Config.Inventory.Slots.height
+
     local takenSlots = {}
     for _, invItem in ipairs(container) do
         local itemDef = ItemDefs[invItem.name]
-        local iSize = (itemDef and itemDef.size) or { x = 1, y = 1 }
+        -- Use item-specific size if it exists (e.g. for already rotated/folded items)
+        local currentSize = invItem.size or (itemDef and itemDef.size) or { x = 1, y = 1 }
 
-        for ix = 0, iSize.x - 1 do
-            for iy = 0, iSize.y - 1 do
+        for ix = 0, currentSize.x - 1 do
+            for iy = 0, currentSize.y - 1 do
                 local slotX = invItem.slot.x + ix
                 local slotY = invItem.slot.y + iy
                 takenSlots[slotX .. '-' .. slotY] = true
@@ -49,39 +61,43 @@ local function FindFreeSlot(container, itemSize)
         end
     end
 
-    -- Find slots
-    for y = 1, Config.Inventory.Slots.height do
-        for x = 1, Config.Inventory.Slots.width do
-            -- Check if START slot is free
-            if not takenSlots[x .. '-' .. y] then
-                -- Check if WHOLE AREA is free
-                local fits = true
-                for ix = 0, itemSize.x - 1 do
-                    for iy = 0, itemSize.y - 1 do
-                        local checkX = x + ix
-                        local checkY = y + iy
-
-                        -- Boundary Check
-                        if checkX > Config.Inventory.Slots.width or checkY > Config.Inventory.Slots.height then
-                            fits = false
-                            break
-                        end
-
-                        -- Overlap Check
-                        if takenSlots[checkX .. '-' .. checkY] then
-                            fits = false
-                            break
-                        end
-                    end
-                    if not fits then break end
+    local function CheckFit(sX, sY, iX, iY)
+        for ix = 0, iX - 1 do
+            for iy = 0, iY - 1 do
+                local checkX = sX + ix
+                local checkY = sY + iy
+                if checkX > width or checkY > height or takenSlots[checkX .. '-' .. checkY] then
+                    return false
                 end
+            end
+        end
+        return true
+    end
 
-                if fits then
-                    return { x = x, y = y }
+    -- Try Normal Orientation
+    for y = 1, height do
+        for x = 1, width do
+            if not takenSlots[x .. '-' .. y] then
+                if CheckFit(x, y, itemSize.x, itemSize.y) then
+                    return { x = x, y = y, rotated = false }
                 end
             end
         end
     end
+
+    -- Try Rotated Orientation (only if not square)
+    if itemSize.x ~= itemSize.y then
+        for y = 1, height do
+            for x = 1, width do
+                if not takenSlots[x .. '-' .. y] then
+                    if CheckFit(x, y, itemSize.y, itemSize.x) then
+                        return { x = x, y = y, rotated = true }
+                    end
+                end
+            end
+        end
+    end
+
     return nil
 end
 
@@ -141,78 +157,53 @@ local function UpdateClientInventory(src)
     end
 end
 
--- Helper: Find Free Slot
-local function FindFreeSlot(container, itemSize)
-    local takenSlots = {}
-    for _, invItem in ipairs(container) do
-        local itemDef = ItemDefs[invItem.name]
-        local iSize = (itemDef and itemDef.size) or { x = 1, y = 1 }
+-- Remove redundant FindFreeSlot
 
-        for ix = 0, iSize.x - 1 do
-            for iy = 0, iSize.y - 1 do
-                local slotX = invItem.slot.x + ix
-                local slotY = invItem.slot.y + iy
-                takenSlots[slotX .. '-' .. slotY] = true
-            end
-        end
-    end
-
-    -- Find slots
-    for y = 1, Config.Inventory.Slots.height do
-        for x = 1, Config.Inventory.Slots.width do
-            -- Check if START slot is free
-            if not takenSlots[x .. '-' .. y] then
-                -- Check if WHOLE AREA is free
-                local fits = true
-                for ix = 0, itemSize.x - 1 do
-                    for iy = 0, itemSize.y - 1 do
-                        local checkX = x + ix
-                        local checkY = y + iy
-
-                        -- Boundary Check
-                        if checkX > Config.Inventory.Slots.width or checkY > Config.Inventory.Slots.height then
-                            fits = false
-                            break
-                        end
-
-                        -- Overlap Check
-                        if takenSlots[checkX .. '-' .. checkY] then
-                            fits = false
-                            break
-                        end
-                    end
-                    if not fits then break end
-                end
-
-                if fits then
-                    return { x = x, y = y }
-                end
-            end
-        end
-    end
-    return nil
-end
-
--- Helper: Add Item to Player
-local function AddItem(src, item, count)
+-- Helper: Add Item to Player (Support for Multi-Container & Rotation)
+local function AddItem(src, item, count, metadata)
     if not Inventory[src] then return false, "Inventory not loaded" end
     local def = ItemDefs[item]
     if not def then return false, "Invalid item" end
 
-    local container = Inventory[src].player
     local maxStack = (def.stackable and def.maxStack) or (def.stackable and 60) or 1
+    local itemSize = (def.size) or { x = 1, y = 1 }
+    local itemWeight = def.weight or 0.0
 
-    -- 1. Try to stack into existing slots (if stackable)
+    -- 1. Try to stack into existing slots across ALL containers
     if def.stackable then
-        for _, invItem in ipairs(container) do
-            if invItem.name == item then
-                local space = maxStack - invItem.count
-                if space > 0 then
-                    local toAdd = math.min(count, space)
-                    invItem.count = invItem.count + toAdd
-                    count = count - toAdd
-                    if count <= 0 then
-                        return true, "Stacked completely"
+        local searchContainers = { 'player' }
+        if Inventory[src].equipment then
+            for _, eqItem in pairs(Inventory[src].equipment) do
+                local eqDef = ItemDefs[eqItem.name]
+                if eqDef and eqDef.container then
+                    table.insert(searchContainers, eqItem.name)
+                end
+            end
+        end
+
+        for _, cKey in ipairs(searchContainers) do
+            local container = Inventory[src][cKey]
+            if container then
+                -- Check weight
+                local currentWeight = GetContainerWeight(container)
+                local maxWeight = (cKey == 'player') and Config.Inventory.MaxWeight or
+                    (ItemDefs[cKey] and ItemDefs[cKey].container.maxWeight) or 100.0
+
+                for _, invItem in ipairs(container) do
+                    if invItem.name == item then
+                        local space = maxStack - invItem.count
+                        if space > 0 then
+                            local toAdd = math.min(count, space)
+                            -- Verify weight before adding to stack
+                            if currentWeight + (itemWeight * toAdd) <= maxWeight then
+                                invItem.count = invItem.count + toAdd
+                                count = count - toAdd
+                                currentWeight = currentWeight + (itemWeight * toAdd)
+                                if count <= 0 then
+                                    return true, "Stacked completely in " .. cKey
+                                end
+                            end
+                        end
                     end
                 end
             end
@@ -221,37 +212,139 @@ local function AddItem(src, item, count)
 
     -- 2. Add remaining count to new slots
     if count > 0 then
-        local itemsToAdd = {}
-        local itemSize = (def.size) or { x = 1, y = 1 }
+        -- Priority list of containers
+        local containerOrder = {
+            { key = 'player', label = 'Bolsos', w = Config.Inventory.Slots.width, h = Config.Inventory.Slots.height, maxW = Config.Inventory.MaxWeight }
+        }
+        if Inventory[src].equipment then
+            for slot, eqItem in pairs(Inventory[src].equipment) do
+                local eqDef = ItemDefs[eqItem.name]
+                if eqDef and eqDef.container then
+                    table.insert(containerOrder, {
+                        key = eqItem.name,
+                        label = eqDef.label or eqItem.name,
+                        w = eqDef.container.size.width,
+                        h = eqDef.container.size.height,
+                        maxW = eqDef.container.maxWeight
+                    })
+                end
+            end
+        end
 
         while count > 0 do
-            local slot = FindFreeSlot(container, itemSize)
-            if not slot then
-                return false, "Inventory full"
+            local foundSlot = nil
+            local targetContainerKey = nil
+            local targetContainerLabel = nil
+
+            for _, cInfo in ipairs(containerOrder) do
+                local container = Inventory[src][cInfo.key]
+                if not container then
+                    Inventory[src][cInfo.key] = {}
+                    container = Inventory[src][cInfo.key]
+                end
+
+                -- Weight Check
+                local currentWeight = GetContainerWeight(container)
+                if currentWeight + itemWeight <= cInfo.maxW then
+                    local slotData = FindFreeSlot(container, itemSize, cInfo.w, cInfo.h)
+                    if slotData then
+                        foundSlot = slotData
+                        targetContainerKey = cInfo.key
+                        targetContainerLabel = cInfo.label
+                        break
+                    end
+                end
+            end
+
+            if not foundSlot then
+                return false, "Espaço insuficiente em todos os compartimentos"
             end
 
             local amount = math.min(count, maxStack)
+            local finalSize = { x = itemSize.x, y = itemSize.y }
+            if foundSlot.rotated then
+                finalSize = { x = itemSize.y, y = itemSize.x }
+            end
 
             local newItem = {
                 name = item,
                 count = amount,
-                slot = slot,
-                id = GenerateUUID()
+                slot = { x = foundSlot.x, y = foundSlot.y },
+                size = finalSize, -- Persist the size (rotated or normal)
+                rotated = foundSlot.rotated,
+                id = GenerateUUID(),
+                metadata = (amount == count) and metadata or nil
             }
-            table.insert(itemsToAdd, newItem)
+            if metadata and amount == count then
+                newItem.metadata = metadata
+            end
 
-            -- Temporarily add to container to mark slots occupied for next iteration in loop
-            -- Wait, FindFreeSlot re-reads container.
-            -- So we must add to container immediately or add to takenSlots in logic.
-            -- Simpler: Add to container immediately.
-            table.insert(container, newItem) -- Optimistic insert
-
+            table.insert(Inventory[src][targetContainerKey], newItem)
             count = count - amount
+
+            -- If we still have items but just filled one container, we continue while-loop
         end
 
-        return true, "Added new stacks"
+        return true, "Adicionado com sucesso"
     end
-    return true, "Added"
+    return true, "Adicionado"
+end
+
+-- Helper: Auto-Equip Item (Try to equip if slot is empty)
+local function AutoEquipItem(src, item, count, metadata)
+    if count ~= 1 then return false end -- Only single items can be auto-equipped
+    local def = ItemDefs[item]
+    if not def then return false end
+
+    local equipment = Inventory[src].equipment
+    if not equipment then return false end
+
+    -- Define priority slots for each type
+    local slotMap = {
+        weapon_pistol = { 'primary', 'secondary' },
+        weapon_rifle = { 'primary', 'secondary' },
+        weapon_shotgun = { 'primary', 'secondary' },
+        weapon_melee = { 'melee' },
+        helmet = { 'head' },
+        armor = { 'body' },
+        vest = { 'vest' },
+        backpack = { 'backpack' }
+    }
+
+    local possibleSlots = slotMap[def.type]
+    if not possibleSlots then return false end
+
+    for _, slot in ipairs(possibleSlots) do
+        -- 1. Check if empty
+        if not equipment[slot] then
+            -- 2. Rules: Weapons - No Duplicate in the other slot
+            if slot == 'primary' or slot == 'secondary' then
+                local other = (slot == 'primary') and 'secondary' or 'primary'
+                if equipment[other] and equipment[other].name == item then
+                    -- Duplicate found in other weapon slot
+                    return false
+                end
+            end
+
+            -- 3. Success: Equip
+            local newItem = {
+                name = item,
+                count = 1,
+                id = GenerateUUID(),
+                metadata = metadata or {}
+            }
+            equipment[slot] = newItem
+
+            -- Sync with bridge/client (clothes/props)
+            local ammo = tonumber(newItem.metadata and newItem.metadata.ammo) or 0
+            local attaches = newItem.metadata and newItem.metadata.attachments or nil
+            TriggerClientEvent('mx-inv:client:updateEquipment', src, item, true, ammo, attaches)
+
+            return true, slot
+        end
+    end
+
+    return false
 end
 
 -- Deprecated: Manual reload system removed. GTA Native handles reloads.
@@ -682,27 +775,27 @@ RegisterNetEvent('mx-inv:server:moveItem', function(data)
         itemObj = fromContainer[fromEquipKey]
         if itemObj then
             print('^3[mx-inv] Debug Move: Found item in equipment: ' .. itemObj.name .. '^0')
-            -- Verify name matches if strict
-            if itemObj.name == itemName then
-                itemIndex = fromEquipKey
-            else
-                print('^1[mx-inv] Debug Move: Mismatch name in equipment. Expected ' ..
-                    itemName .. ' got ' .. itemObj.name .. '^0')
+            -- Verify ID matches if provided, otherwise fallback to name
+            if data.id and itemObj.id ~= data.id then
+                print('^1[mx-inv] Debug Move: ID mismatch in equipment slot ' .. fromEquipKey .. '^0')
+                return
             end
+            itemIndex = fromEquipKey
         else
             print('^1[mx-inv] Debug Move: Equipment key ' .. fromEquipKey .. ' is empty.^0')
         end
     else
         -- Source is Standard Array
         for i, item in ipairs(fromContainer) do
-            -- Check ID first
+            -- PRIORITY 1: Check ID (UUID) - Crucial for multiple items of same type
             if data.id and item.id == data.id then
                 itemIndex = i
                 itemObj = item
                 break
             end
 
-            if item.name == itemName then
+            -- PRIORITY 2: Fallback to Slot + Name (Legacy/Safety)
+            if not data.id and item.name == itemName then
                 if fromSlot then
                     if item.slot.x == tonumber(fromSlot.x) and item.slot.y == tonumber(fromSlot.y) then
                         itemIndex = i
@@ -730,9 +823,23 @@ RegisterNetEvent('mx-inv:server:moveItem', function(data)
     if toEquipKey then
         -- Target is Equipment Slot
         print('^3[mx-inv] Debug Move: Target is EQUIPMENT key: ' .. toEquipKey .. '^0')
+
+        -- VALIDATION: Prevent Duplicate Weapons in Primary/Secondary
+        if toEquipKey == 'primary' or toEquipKey == 'secondary' then
+            local otherSlot = (toEquipKey == 'primary') and 'secondary' or 'primary'
+            local currentOther = toContainer[otherSlot]
+
+            if currentOther and currentOther.name == itemObj.name then
+                print('^1[mx-inv] Validation: Blocked duplicate weapon ' .. itemObj.name .. '^0')
+                TriggerClientEvent('mx-inv:client:notify', src, "Você já possui esta arma equipada em outro slot!",
+                    "error")
+                UpdateClientInventory(src) -- Re-sync to snap back
+                return
+            end
+        end
+
         if toContainer[toEquipKey] then
-            print('^1[mx-inv] Warning: Equipment slot ' .. toEquipKey .. ' occupied. Swapping not implemented yet.^0')
-            -- Keep simplified overwrite logic for now
+            print('^3[mx-inv] Warning: Equipment slot ' .. toEquipKey .. ' occupied. Overwriting.^0')
         end
     else
         -- Target is Standard Array
@@ -1444,6 +1551,153 @@ RegisterCommand('debuginv', function(source, args)
 end, false)
 
 -- ============================================================
+-- Item Drops
+-- ============================================================
+local worldDrops = {}
+
+RegisterNetEvent('mx-inv:server:requestDrops', function()
+    local src = source
+    TriggerClientEvent('mx-inv:client:syncDrops', src, worldDrops)
+end)
+
+RegisterNetEvent('mx-inv:server:dropItem', function(data)
+    local src = source
+    print('^3[mx-inv] Server: dropItem triggered by ' .. src .. '^0')
+    if not data then
+        print('^1[mx-inv] Server Error: dropItem data is nil^0')
+        return
+    end
+
+    local itemId = data.itemId
+    local amount = tonumber(data.amount) or 1
+    local containerId = data.containerId
+
+    if not Inventory[src] then return end
+
+    local containerKey = (containerId == 'player-inv') and 'player' or containerId
+    local container = Inventory[src][containerKey]
+    if not container then return end
+
+    -- Find and remove item
+    local targetItem = nil
+    local targetIndex = -1
+    for i, item in ipairs(container) do
+        if item.id == itemId then
+            targetItem = item
+            targetIndex = i
+            break
+        end
+    end
+
+    if not targetItem or targetItem.count < amount then
+        print('^1[mx-inv] dropItem: Item not found or insufficient count^0')
+        return
+    end
+
+    -- Update inventory
+    if targetItem.count == amount then
+        table.remove(container, targetIndex)
+    else
+        targetItem.count = targetItem.count - amount
+    end
+
+    -- Calculate drop position
+    local ped = GetPlayerPed(src)
+    local coords = GetEntityCoords(ped)
+    local heading = GetEntityHeading(ped)
+
+    -- Add small random offset for separation (±0.4m)
+    local offsetX = (math.random() - 0.5) * 0.8
+    local offsetY = (math.random() - 0.5) * 0.8
+
+    local x = coords.x + math.sin(math.rad(-heading)) * 1.2 + offsetX
+    local y = coords.y + math.cos(math.rad(-heading)) * 1.2 + offsetY
+    local z = coords.z - 0.95 -- Floor level roughly
+
+    local dropId = GenerateUUID()
+    local itemDef = ItemDefs[targetItem.name]
+    local dropProp = (itemDef and itemDef.dropProp) or Config.Inventory.DefaultDropProp
+
+    worldDrops[dropId] = {
+        id = dropId,
+        name = targetItem.name,
+        type = itemDef.type or 'generic', -- Add type for client-side rotation logic
+        label = itemDef.label or targetItem.name,
+        count = amount,
+        metadata = targetItem.metadata,
+        coords = { x = x, y = y, z = z },
+        prop = dropProp,
+        created_at = os.time() -- For despawn logic
+    }
+
+    -- Save & Refresh
+    local player = MX_GetPlayer(src)
+    if player then DB.SavePlayer(player.identifier, Inventory[src]) end
+    UpdateClientInventory(src)
+
+    -- Save Drop to DB
+    DB.SaveDrop(dropId, worldDrops[dropId])
+
+    -- Sync to all
+    TriggerClientEvent('mx-inv:client:syncDrops', -1, worldDrops)
+    print('^2[mx-inv] Player ' .. src .. ' dropped ' .. amount .. 'x ' .. targetItem.name .. '^0')
+end)
+
+RegisterNetEvent('mx-inv:server:pickupItem', function(dropId)
+    local src = source
+    local drop = worldDrops[dropId]
+
+    if not drop then
+        print('^1[mx-inv] pickupItem: Drop not found ' .. tostring(dropId) .. '^0')
+        return
+    end
+
+    local ped = GetPlayerPed(src)
+    local coords = GetEntityCoords(ped)
+    local dist = #(coords - vector3(drop.coords.x, drop.coords.y, drop.coords.z))
+
+    if dist > 3.0 then
+        print('^1[mx-inv] pickupItem: Player ' .. src .. ' too far from drop^0')
+        return
+    end
+
+    -- 1. Try Auto-Equip
+    local equipped, slotLabel = AutoEquipItem(src, drop.name, drop.count, drop.metadata)
+    if equipped then
+        -- Remove from world
+        worldDrops[dropId] = nil
+        DB.DeleteDrop(dropId)
+        TriggerClientEvent('mx-inv:client:syncDrops', -1, worldDrops)
+        TriggerClientEvent('mx-inv:client:notify', src, 'Equipou ' .. drop.label .. ' automaticamente.', 'success')
+
+        -- Save & Refresh
+        local player = MX_GetPlayer(src)
+        if player then DB.SavePlayer(player.identifier, Inventory[src]) end
+        UpdateClientInventory(src)
+        print('^2[mx-inv] Player ' .. src .. ' auto-equipped ' .. drop.name .. '^0')
+        return
+    end
+
+    -- 2. Try to add to inventory (Multi-container + Rotation)
+    local success, msg = AddItem(src, drop.name, drop.count, drop.metadata)
+    if success then
+        -- Remove from world
+        worldDrops[dropId] = nil
+        DB.DeleteDrop(dropId)
+        TriggerClientEvent('mx-inv:client:syncDrops', -1, worldDrops)
+        TriggerClientEvent('mx-inv:client:notify', src, 'Pegou ' .. drop.label .. ': ' .. msg, 'success')
+
+        -- Save & Refresh
+        local player = MX_GetPlayer(src)
+        if player then DB.SavePlayer(player.identifier, Inventory[src]) end
+        UpdateClientInventory(src)
+        print('^2[mx-inv] Player ' .. src .. ' picked up ' .. drop.count .. 'x ' .. drop.name .. '^0')
+    else
+        TriggerClientEvent('mx-inv:client:notify', src, msg, 'error')
+    end
+end)
+
+-- ============================================================
 -- Split Stack
 -- ============================================================
 
@@ -1815,5 +2069,28 @@ RegisterNetEvent('mx-inv:server:useHotbar', function(slotIndex)
     else
         print('^3[mx-inv] Hotbar: No item in slot ' ..
             equipKey .. '. Dump: ' .. json.encode(Inventory[src].equipment) .. '^0')
+    end
+end)
+
+-- Drop Cleanup Thread
+Citizen.CreateThread(function()
+    while true do
+        Citizen.Wait(60000) -- Check every 1 minute
+        local currentTime = os.time()
+        local despawnTime = (Config.Inventory.DropDespawnTime or 30) * 60
+        local itemsRemoved = 0
+
+        for id, drop in pairs(worldDrops) do
+            if drop.created_at and (currentTime - drop.created_at) > despawnTime then
+                worldDrops[id] = nil
+                DB.DeleteDrop(id)
+                itemsRemoved = itemsRemoved + 1
+            end
+        end
+
+        if itemsRemoved > 0 then
+            TriggerClientEvent('mx-inv:client:syncDrops', -1, worldDrops)
+            print('^3[mx-inv] Cleanup: Removed ' .. itemsRemoved .. ' expired drops.^0')
+        end
     end
 end)

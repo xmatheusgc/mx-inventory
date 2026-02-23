@@ -99,8 +99,8 @@ interface InventoryState {
 
     // Shortcuts
     shortcuts: Record<string, string | null>; // key -> itemName
-    hoveredItem: { name: string, containerId: string } | null;
-    setHoveredItem: (data: { name: string, containerId: string } | null) => void;
+    hoveredItem: { item: Item, containerId: string } | null;
+    setHoveredItem: (data: { item: Item, containerId: string } | null) => void;
     setShortcut: (key: string) => void;
     removeShortcut: (key: string) => void;
 
@@ -111,6 +111,11 @@ interface InventoryState {
     // Context Menu (only one open at a time)
     activeContextMenuItemId: string | null;
     setActiveContextMenuItemId: (id: string | null) => void;
+
+    // Notifications
+    notifications: { id: string; message: string; type: 'error' | 'success' | 'info'; duration?: number }[];
+    addNotification: (message: string, type: 'error' | 'success' | 'info', duration?: number) => void;
+    removeNotification: (id: string) => void;
 }
 
 // No helpers needed currently
@@ -165,7 +170,8 @@ export const useInventoryStore = create<InventoryState>((set) => ({
     setShortcut: (key: string) => {
         set((state) => {
             if (!state.hoveredItem) return state;
-            const { name, containerId } = state.hoveredItem;
+            const { item, containerId } = state.hoveredItem;
+            const name = item.name;
 
             // Validation: Must be in player-inv or vest
             const container = state.containers[containerId];
@@ -230,6 +236,23 @@ export const useInventoryStore = create<InventoryState>((set) => ({
     // Context Menu
     activeContextMenuItemId: null,
     setActiveContextMenuItemId: (id) => set({ activeContextMenuItemId: id }),
+
+    // Notifications
+    notifications: [],
+    addNotification: (message, type, duration = 3000) => set((state) => {
+        const id = Math.random().toString(36).substring(2, 9);
+        const newNotification = { id, message, type, duration };
+
+        // Auto-remove
+        setTimeout(() => {
+            useInventoryStore.getState().removeNotification(id);
+        }, duration);
+
+        return { notifications: [...state.notifications, newNotification] };
+    }),
+    removeNotification: (id) => set((state) => ({
+        notifications: state.notifications.filter(n => n.id !== id)
+    })),
 
     setEquipment: (data: Record<string, Item | null>) => set({ equipment: data }),
 
