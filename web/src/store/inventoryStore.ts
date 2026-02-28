@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { ITEM_CONFIGS } from '../config/items';
 
-export type ItemType = 'weapon_primary' | 'weapon_secondary' | 'weapon_pistol' | 'weapon_melee' | 'helmet' | 'mask' | 'earpiece' | 'armor' | 'vest' | 'backpack' | 'generic' | 'consumable' | 'throwable' | 'magazine' | 'ammo' | 'attachment_scope' | 'attachment_grip' | 'attachment_muzzle' | 'attachment_skin' | 'weapon_smg' | 'weapon_rifle' | 'weapon_sniper' | 'weapon_shotgun';
+export type ItemType = 'weapon_primary' | 'weapon_secondary' | 'weapon_pistol' | 'weapon_melee' | 'helmet' | 'mask' | 'earpiece' | 'armor' | 'vest' | 'backpack' | 'generic' | 'consumable' | 'throwable' | 'magazine' | 'ammo' | 'attachment_scope' | 'attachment_grip' | 'attachment_muzzle' | 'attachment_skin' | 'weapon_smg' | 'weapon_rifle' | 'weapon_sniper' | 'weapon_shotgun' | 'helmet_accessory';
 
 export interface Item {
     id: string; // UUID
@@ -32,7 +32,10 @@ export interface Item {
         clip?: number;           // Current clip ammo for equipped weapons
         capacity?: number;       // (Legacy)
         caliber?: string;        // Ammo caliber type
-        attachments?: Record<string, string | null>; // slot -> attachment item name (e.g. { muzzle: 'suppressor_pistol', scope: null })
+        attachments?: Record<string, string | null>; // slot -> attachment item name
+        // Helmet accessory state
+        accessories?: Partial<Record<string, { name: string; id: string }>>; // slot -> { name, id }
+        visorDown?: boolean;     // true = visor down = effect active
     };
     isEquipment?: boolean; // Indicates if the item is currently in an equipment slot
 }
@@ -83,6 +86,11 @@ interface InventoryState {
     // Attachment Actions
     attachToWeapon: (weaponId: string, weaponContainerId: string, attachmentSlot: string, attachmentItem: Item, fromContainerId: string) => void;
     removeAttachment: (weaponId: string, weaponContainerId: string, attachmentSlot: string, toContainerId: string, targetSlot?: { x: number; y: number }) => void;
+
+    // Helmet Accessory Actions
+    attachToHelmet: (helmetId: string, helmetContainerId: string, accessorySlot: string, accessoryItem: Item, fromContainerId: string) => void;
+    removeHelmetAccessory: (helmetId: string, helmetContainerId: string, accessorySlot: string, _toContainerId?: string, _targetSlot?: { x: number; y: number }) => void;
+    toggleHelmetVisor: (helmetId: string) => void;
 
     // UI Actions
     openWindows: { id: string, position?: { x: number, y: number } }[];
@@ -794,5 +802,96 @@ export const useInventoryStore = create<InventoryState>((set) => ({
                 }
             };
         }
+    }),
+
+    // ── Helmet Accessory Actions ───────────────────────────────────────
+    attachToHelmet: (helmetId: string, helmetContainerId: string, accessorySlot: string, accessoryItem: Item, fromContainerId: string) => set((state: InventoryState) => {
+        let helmet: Item | null = null;
+        let helmetLocation: 'equipment' | 'container' = 'container';
+
+        if (helmetContainerId.startsWith('equip-')) {
+            helmet = state.equipment['head'] || null;
+            helmetLocation = 'equipment';
+        } else {
+            const container = state.containers[helmetContainerId];
+            if (container) {
+                helmet = container.items.find(i => i.id === helmetId) || null;
+            }
+        }
+
+        if (!helmet || helmet.id !== helmetId) return state;
+
+        const updatedHelmet: Item = {
+            ...helmet,
+            metadata: {
+                ...helmet.metadata,
+                accessories: { ...(helmet.metadata?.accessories || {}), [accessorySlot]: { name: accessoryItem.name, id: accessoryItem.id } },
+                visorDown: helmet.metadata?.visorDown || false
+            }
+        };
+
+        const sourceContainer = state.containers[fromContainerId];
+        if (!sourceContainer) return state;
+        const newSourceItems = sourceContainer.items.filter(i => i.id !== accessoryItem.id);
+
+        if (helmetLocation === 'equipment') {
+            return {
+                equipment: { ...state.equipment, head: updatedHelmet },
+                containers: { ...state.containers, [fromContainerId]: { ...sourceContainer, items: newSourceItems } }
+            };
+        } else {
+            const targetContainer = state.containers[helmetContainerId];
+            const newTargetItems = targetContainer.items.map(i => i.id === helmetId ? updatedHelmet : i);
+            return {
+                containers: {
+                    ...state.containers,
+                    [fromContainerId]: { ...sourceContainer, items: newSourceItems },
+                    [helmetContainerId]: { ...targetContainer, items: newTargetItems }
+                }
+            };
+        }
+    }),
+
+    removeHelmetAccessory: (helmetId: string, helmetContainerId: string, accessorySlot: string, _toContainerId?: string, _targetSlot?: { x: number; y: number }) => set((state: InventoryState) => {
+        let helmet: Item | null = null;
+        let helmetLocation: 'equipment' | 'container' = 'container';
+
+        if (helmetContainerId.startsWith('equip-')) {
+            helmet = state.equipment['head'] || null;
+            helmetLocation = 'equipment';
+        } else {
+            const container = state.containers[helmetContainerId];
+            if (container) {
+                helmet = container.items.find(i => i.id === helmetId) || null;
+            }
+        }
+
+        if (!helmet || helmet.id !== helmetId) return state;
+
+        const newAcc = { ...(helmet.metadata?.accessories || {}) };
+        delete newAcc[accessorySlot];
+
+        const updatedHelmet = { ...helmet, metadata: { ...helmet.metadata, accessories: newAcc, visorDown: false } };
+
+        if (helmetLocation === 'equipment') {
+            return { equipment: { ...state.equipment, head: updatedHelmet } };
+        } else {
+            const targetContainer = state.containers[helmetContainerId];
+            const newTargetItems = targetContainer.items.map(i => i.id === helmetId ? updatedHelmet : i);
+            return {
+                containers: {
+                    ...state.containers,
+                    [helmetContainerId]: { ...targetContainer, items: newTargetItems }
+                }
+            };
+        }
+    }),
+
+    toggleHelmetVisor: (helmetId: string) => set((state: InventoryState) => {
+        const helmet = state.equipment['head'];
+        if (!helmet || helmet.id !== helmetId) return state;
+        return {
+            equipment: { ...state.equipment, head: { ...helmet, metadata: { ...helmet.metadata, visorDown: !helmet.metadata?.visorDown } } }
+        };
     })
 }));

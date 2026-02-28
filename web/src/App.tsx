@@ -399,7 +399,41 @@ function App() {
         }
       }
 
-      // Stackable -> find same-name items with room
+      // Helmet accessory -> highlight the matching helmets in grid and equipped head, and the detail slot
+      if (item.type === 'helmet_accessory') {
+        dragType = 'attachment' as any; // reuse 'attachment' glow style
+        const accDef = defs[item.name];
+        const accSlot = accDef?.helmetAccessory?.slot;
+        if (accSlot) {
+          // Check helmets in containers
+          for (const c of Object.values(containers)) {
+            for (const ci of c.items) {
+              if (ci.type === 'helmet') {
+                const hDef = defs[ci.name];
+                const supported: string[] = hDef?.equipment?.supportedAccessories || [];
+                const hasAnyAccessory = ci.metadata?.accessories && Object.keys(ci.metadata.accessories).length > 0;
+                if (supported.includes(accSlot) && !hasAnyAccessory) {
+                  compatibleIds.add(ci.id);
+                  compatibleIds.add(`helmet-acc-${ci.id}-${accSlot}`);
+                }
+              }
+            }
+          }
+          // Check equipped helmet
+          const helmet = equipment['head'];
+          if (helmet) {
+            const hDef = defs[helmet.name];
+            const supported: string[] = hDef?.equipment?.supportedAccessories || [];
+            const hasAnyEquippedAccessory = helmet.metadata?.accessories && Object.keys(helmet.metadata.accessories).length > 0;
+            if (supported.includes(accSlot) && !hasAnyEquippedAccessory) {
+              compatibleIds.add(helmet.id);
+              compatibleIds.add(`equip-head`);
+              compatibleIds.add(`helmet-acc-${helmet.id}-${accSlot}`);
+            }
+          }
+        }
+      }
+
       if (item.stackable) {
         dragType = dragType || 'stack';
         for (const c of Object.values(containers)) {
@@ -697,14 +731,23 @@ function App() {
           attachmentSlot: slotId,
           attachmentItem: attachmentName
         });
+      } else if (dragData?.type === 'installed-helmet-accessory') {
+        const { helmetId, helmetContainerId, slotId, accessoryName } = dragData;
+        useInventoryStore.getState().removeHelmetAccessory(helmetId, helmetContainerId, slotId, 'player-inv');
+        fetchNui('removeHelmetAccessory', {
+          helmetId,
+          helmetContainerId,
+          accessorySlot: slotId,
+          accessoryItem: accessoryName
+        });
       }
       return;
     }
 
     // Handle installed-attachment being dropped onto a container
     const dragData = active.data.current;
-    if (dragData?.type === 'installed-attachment') {
-      const { weaponId, weaponContainerId, slotId, attachmentName } = dragData;
+    if (dragData?.type === 'installed-attachment' || dragData?.type === 'installed-helmet-accessory') {
+      const isHelmetAcc = dragData.type === 'installed-helmet-accessory';
 
       const toId = over.id as string;
       const { baseId, regionOffset } = parseContainerId(toId);
@@ -732,15 +775,29 @@ function App() {
       const slotY = relSlotY + regionOffset.y;
       const targetSlot = { x: slotX, y: slotY };
 
-      useInventoryStore.getState().removeAttachment(weaponId, weaponContainerId, slotId, baseId, targetSlot);
-      fetchNui('removeAttachment', {
-        weaponId,
-        weaponContainerId,
-        attachmentSlot: slotId,
-        attachmentItem: attachmentName,
-        toContainerId: baseId,
-        toSlot: targetSlot
-      });
+      if (isHelmetAcc) {
+        const { helmetId, helmetContainerId, slotId, accessoryName } = dragData;
+        useInventoryStore.getState().removeHelmetAccessory(helmetId, helmetContainerId, slotId, baseId, targetSlot);
+        fetchNui('removeHelmetAccessory', {
+          helmetId,
+          helmetContainerId,
+          accessorySlot: slotId,
+          accessoryItem: accessoryName,
+          toContainerId: baseId,
+          toSlot: targetSlot
+        });
+      } else {
+        const { weaponId, weaponContainerId, slotId, attachmentName } = dragData;
+        useInventoryStore.getState().removeAttachment(weaponId, weaponContainerId, slotId, baseId, targetSlot);
+        fetchNui('removeAttachment', {
+          weaponId,
+          weaponContainerId,
+          attachmentSlot: slotId,
+          attachmentItem: attachmentName,
+          toContainerId: baseId,
+          toSlot: targetSlot
+        });
+      }
       return;
     }
 
@@ -775,6 +832,45 @@ function App() {
     if (!fromContainerId || !item) return;
 
     const toId = over.id as string;
+
+    // --- HELMET ACCESSORY SLOT LOGIC ---
+    if (toId.startsWith('helmet-acc-')) {
+      const slotData = over.data.current;
+      if (!slotData) return;
+
+      const accessorySlot = slotData.slotId as string;
+      const helmetId = slotData.helmetId as string;
+
+      const helmetContainerId = slotData.helmetContainerId as string;
+
+      // Item must be a helmet_accessory
+      if (item.type !== 'helmet_accessory') return;
+
+      const defs = itemDefsRef.current;
+      const accDef = defs[item.name];
+      if (!accDef?.helmetAccessory || accDef.helmetAccessory.slot !== accessorySlot) return;
+
+      // Find the equipped helmet and verify compatibility
+      const helmet = equipment['head'];
+      if (!helmet || helmet.id !== helmetId) return;
+      const helmetDef = defs[helmet.name];
+      const supported: string[] = helmetDef?.equipment?.supportedAccessories || [];
+      if (!supported.includes(accessorySlot)) return;
+
+      // Slot must not already be occupied
+      if (helmet.metadata?.accessories?.[accessorySlot]) return;
+
+      const { attachToHelmet } = useInventoryStore.getState();
+      attachToHelmet(helmetId, helmetContainerId, accessorySlot, item, fromContainerId);
+      fetchNui('attachToHelmet', {
+        helmetId,
+        helmetContainerId,
+        accessoryItem: item.name,
+        accessoryItemId: item.id,
+        fromContainerId
+      });
+      return;
+    }
 
     // --- ATTACHMENT SLOT LOGIC ---
     if (toId.startsWith('attachment-')) {
@@ -811,10 +907,11 @@ function App() {
       const targetSlotId = toId.replace('equip-', '');
       const acceptedTypes = over.data.current?.acceptedTypes as string[] || [];
 
-      // Validate Type (skip for ammo and attachments — they have special handling)
+      // Validate Type (skip for ammo, attachments and accessories — they have special handling)
       const isAmmo = item.type === 'ammo';
       const isAttachment = item.type?.startsWith('attachment_');
-      if (!isAmmo && !isAttachment && acceptedTypes.length > 0 && item.type && !acceptedTypes.includes(item.type)) {
+      const isAccessory = item.type === 'helmet_accessory';
+      if (!isAmmo && !isAttachment && !isAccessory && acceptedTypes.length > 0 && item.type && !acceptedTypes.includes(item.type)) {
         return;
       }
 
@@ -841,6 +938,35 @@ function App() {
           attachmentSlot,
           attachmentItem: item.name,
           attachmentItemId: item.id,
+          fromContainerId
+        });
+        return;
+      }
+
+      // --- ACCESSORY → HELMET SLOT ---
+      if (item.type === 'helmet_accessory' && !fromContainerId.startsWith('equip-')) {
+        const helmet = equipment[targetSlotId];
+        if (!helmet || helmet.type !== 'helmet') return;
+
+        const defs = itemDefsRef.current;
+        const accDef = defs[item.name];
+        if (!accDef?.helmetAccessory?.slot) return;
+
+        const accessorySlot = accDef.helmetAccessory.slot;
+        const helmetDef = defs[helmet.name];
+        if (!helmetDef?.equipment?.supportedAccessories?.includes(accessorySlot)) return;
+
+        // Check slot not already occupied (limit 1 total accessory)
+        const hasAnyAccessory = helmet.metadata?.accessories && Object.keys(helmet.metadata.accessories).length > 0;
+        if (hasAnyAccessory) return;
+
+        const { attachToHelmet } = useInventoryStore.getState();
+        attachToHelmet(helmet.id, `equip-${targetSlotId}`, accessorySlot, item, fromContainerId);
+        fetchNui('attachToHelmet', {
+          helmetId: helmet.id,
+          helmetContainerId: `equip-${targetSlotId}`,
+          accessoryItem: item.name,
+          accessoryItemId: item.id,
           fromContainerId
         });
         return;
@@ -992,6 +1118,45 @@ function App() {
               fromContainerId
             });
             return;
+          }
+        }
+        return; // Reject gracefully
+      }
+    }
+
+    // --- ACCESSORY -> HELMET IN GRID LOGIC ---
+    if (item.type === 'helmet_accessory' && !fromContainerId.startsWith('equip-') && containers[baseId]) {
+      const targetContainer = containers[baseId];
+      const targetItem = targetContainer.items.find((i: any) => {
+        const iX = i.slot.x;
+        const iY = i.slot.y;
+        const iW = i.size?.x || 1;
+        const iH = i.size?.y || 1;
+        return relSlotX >= iX && relSlotX < iX + iW &&
+          relSlotY >= iY && relSlotY < iY + iH;
+      });
+
+      if (targetItem && targetItem.type === 'helmet') {
+        const defs = itemDefsRef.current;
+        const accDef = defs[item.name];
+        if (accDef?.helmetAccessory?.slot) {
+          const accessorySlot = accDef.helmetAccessory.slot;
+          const helmetDef = defs[targetItem.name];
+          if (helmetDef?.equipment?.supportedAccessories?.includes(accessorySlot)) {
+            // Check if helmet already has *ANY* accessory (limit 1)
+            const hasAnyAccessory = targetItem.metadata?.accessories && Object.keys(targetItem.metadata.accessories).length > 0;
+            if (!hasAnyAccessory) {
+              const { attachToHelmet } = useInventoryStore.getState();
+              attachToHelmet(targetItem.id, baseId, accessorySlot, item, fromContainerId);
+              fetchNui('attachToHelmet', {
+                helmetId: targetItem.id,
+                helmetContainerId: baseId,
+                accessoryItem: item.name,
+                accessoryItemId: item.id,
+                fromContainerId
+              });
+              return;
+            }
           }
         }
         return; // Reject gracefully

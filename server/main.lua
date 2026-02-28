@@ -1,4 +1,5 @@
 local ItemDefs = Items -- data/items.lua loaded via fxmanifest
+local SyncHelmetAccessory
 
 -- DB is global now (loaded from server/db.lua)
 
@@ -429,6 +430,15 @@ local function LoadPlayer(src)
         -- Wait a tiny bit then inform client of its initial equipment setup (weapons & clothes)
         SetTimeout(1000, function()
             TriggerClientEvent('mx-inv:client:playerLoaded', src, Inventory[src].equipment)
+
+            local headItem = Inventory[src].equipment and Inventory[src].equipment['head']
+            if headItem and headItem.metadata and headItem.metadata.accessories then
+                for accSlot, accData in pairs(headItem.metadata.accessories) do
+                    if accData and accData.name then
+                        SyncHelmetAccessory(src, headItem.name, accSlot, accData.name, headItem.metadata.visorDown)
+                    end
+                end
+            end
         end)
     else
         print('^3[mx-inv] Player ' .. src .. ' already loaded in memory.^0')
@@ -483,6 +493,15 @@ RegisterNetEvent('mx-inv:server:requestEquipment', function()
 
     print('^2[mx-inv] Re-syncing equipment to ' .. src .. '^0')
     TriggerClientEvent('mx-inv:client:playerLoaded', src, equip)
+
+    local headItem = equip['head']
+    if headItem and headItem.metadata and headItem.metadata.accessories then
+        for accSlot, accData in pairs(headItem.metadata.accessories) do
+            if accData and accData.name then
+                SyncHelmetAccessory(src, headItem.name, accSlot, accData.name, headItem.metadata.visorDown)
+            end
+        end
+    end
 end)
 
 -- Open Inventory Event (Now instant)
@@ -1483,6 +1502,223 @@ RegisterNetEvent('mx-inv:server:removeAttachment', function(data)
     end
 
     -- Save + Refresh
+    local player = MX_GetPlayer(src)
+    if player then DB.SavePlayer(player.identifier, containerMap) end
+    UpdateClientInventory(src)
+end)
+
+-- ============================================================
+-- HELMET ACCESSORY EVENTS
+-- ============================================================
+
+-- Helper: resolve the helmet item from equipment slot 'head'
+local function GetEquippedHelmet(containerMap)
+    if not containerMap.equipment then return nil end
+    return containerMap.equipment['head']
+end
+
+-- Helper: trigger helmet drawable + visual effect update on client
+SyncHelmetAccessory = function(src, helmetName, accessorySlot, accessoryName, visorDown)
+    local helmetDef = ItemDefs[helmetName]
+    if not helmetDef or not helmetDef.equipment then return end
+
+    local drawableId = helmetDef.equipment.drawableId -- base (no accessory)
+    if accessoryName and helmetDef.equipment.accessoryDrawables then
+        local variants = helmetDef.equipment.accessoryDrawables[accessoryName]
+        if variants then
+            drawableId = visorDown and variants.visorDown or variants.visorUp
+        end
+    end
+
+    -- Update GTA prop drawable (head props use SetPedPropIndex, not SetPedComponentVariation)
+    TriggerClientEvent('mx-inv:client:applyHelmetAccessory', src, {
+        propId        = helmetDef.equipment.propId, -- prop slot (0 = head)
+        drawableId    = drawableId,
+        textureId     = helmetDef.equipment.textureId or 0,
+        slot          = accessorySlot,
+        accessoryName = accessoryName,
+        visorDown     = visorDown
+    })
+end
+
+RegisterNetEvent('mx-inv:server:attachToHelmet', function(data)
+    local src = source
+    local containerMap = Inventory[src]
+    if not containerMap then return end
+
+    local helmetId   = data.helmetId
+    local accessItem = data.accessoryItem   -- item name, e.g. 'nvg'
+    local accessId   = data.accessoryItemId -- UUID
+    local fromContId = data.fromContainerId
+
+    local helmet     = GetEquippedHelmet(containerMap)
+    if not helmet or helmet.id ~= helmetId then
+        print('^1[mx-inv] attachToHelmet: helmet not equipped.^0')
+        return
+    end
+
+    -- Compatibility check
+    local helmetDef = ItemDefs[helmet.name]
+    local accessDef = ItemDefs[accessItem]
+    if not helmetDef or not helmetDef.equipment or not helmetDef.equipment.supportedAccessories then
+        print('^1[mx-inv] attachToHelmet: helmet has no supportedAccessories.^0')
+        return
+    end
+    if not accessDef or not accessDef.helmetAccessory then
+        print('^1[mx-inv] attachToHelmet: item is not a helmet_accessory.^0')
+        return
+    end
+    local slot = accessDef.helmetAccessory.slot
+    local compatible = false
+    for _, s in ipairs(helmetDef.equipment.supportedAccessories) do
+        if s == slot then
+            compatible = true; break
+        end
+    end
+    if not compatible then
+        print('^1[mx-inv] attachToHelmet: ' .. accessItem .. ' incompatible with ' .. helmet.name .. '.^0')
+        TriggerClientEvent('mx-inv:client:notify', src, 'Este capacete não é compatível com esse acessório!', 'error')
+        return
+    end
+
+    -- Helmet already has an accessory? We only allow 1 at a time.
+    if not helmet.metadata then helmet.metadata = {} end
+    if not helmet.metadata.accessories then helmet.metadata.accessories = {} end
+
+    -- Check if there are any accessories currently attached
+    for k, v in pairs(helmet.metadata.accessories) do
+        TriggerClientEvent('mx-inv:client:notify', src, 'Este capacete já possui um acessório montado!', 'error')
+        return
+    end
+    -- Remove accessory from source container
+    local fromKey = (fromContId == 'player-inv') and 'player' or fromContId
+    local fromCont = containerMap[fromKey]
+    if not fromCont then
+        print('^1[mx-inv] attachToHelmet: source container not found: ' .. tostring(fromContId) .. '^0')
+        return
+    end
+    local rmIdx = nil
+    for i, it in ipairs(fromCont) do
+        if it.id == accessId then
+            rmIdx = i; break
+        end
+    end
+    if not rmIdx then
+        print('^1[mx-inv] attachToHelmet: accessory item not found in source.^0')
+        return
+    end
+    table.remove(fromCont, rmIdx)
+
+    -- Store in helmet metadata; visor starts UP (effect inactive)
+    helmet.metadata.accessories[slot] = { name = accessItem, id = accessId }
+    helmet.metadata.visorDown = helmet.metadata.visorDown or false
+
+    print('^2[mx-inv] Attached ' .. accessItem .. ' to helmet slot ' .. slot .. '^0')
+    SyncHelmetAccessory(src, helmet.name, slot, accessItem, false)
+
+    local player = MX_GetPlayer(src)
+    if player then DB.SavePlayer(player.identifier, containerMap) end
+    UpdateClientInventory(src)
+end)
+
+RegisterNetEvent('mx-inv:server:removeHelmetAccessory', function(data)
+    local src = source
+    local containerMap = Inventory[src]
+    if not containerMap then return end
+
+    local helmetId = data.helmetId
+    local slot     = data.accessorySlot
+    local toContId = data.toContainerId
+    local toSlot   = data.toSlot
+
+    local helmet   = GetEquippedHelmet(containerMap)
+    if not helmet or helmet.id ~= helmetId then
+        print('^1[mx-inv] removeHelmetAccessory: helmet not equipped.^0')
+        return
+    end
+
+    if not helmet.metadata or not helmet.metadata.accessories or not helmet.metadata.accessories[slot] then
+        print('^1[mx-inv] removeHelmetAccessory: no accessory in slot ' .. tostring(slot) .. '.^0')
+        return
+    end
+
+    local acc = helmet.metadata.accessories[slot]
+    helmet.metadata.accessories[slot] = nil
+    -- If visor was down, deactivate effect and reset to base drawable
+    if helmet.metadata.visorDown then helmet.metadata.visorDown = false end
+
+    -- Return accessory to inventory
+    local added = false
+    if toContId and toSlot then
+        local toKey = (toContId == 'player-inv') and 'player' or toContId
+        local toCont = containerMap[toKey]
+        if toCont then
+            table.insert(toCont, { name = acc.name, count = 1, slot = toSlot, id = acc.id or GenerateUUID() })
+            added = true
+        end
+    end
+    if not added then
+        added = AddItem(src, acc.name, 1)
+    end
+    if not added then
+        -- Rollback
+        helmet.metadata.accessories[slot] = acc
+        print('^1[mx-inv] removeHelmetAccessory: failed to return item, rolling back.^0')
+        return
+    end
+
+    print('^2[mx-inv] Removed helmet accessory ' .. acc.name .. ' from slot ' .. slot .. '^0')
+    SyncHelmetAccessory(src, helmet.name, nil, nil, false) -- reset to base drawable, deactivate effects
+
+    local player = MX_GetPlayer(src)
+    if player then DB.SavePlayer(player.identifier, containerMap) end
+    UpdateClientInventory(src)
+end)
+
+RegisterNetEvent('mx-inv:server:toggleHelmetVisor', function(data)
+    local src = source
+    local containerMap = Inventory[src]
+    if not containerMap then return end
+
+    local helmet = GetEquippedHelmet(containerMap)
+    -- Accept toggle both from NUI (data.helmetId set) and from keybind (no helmetId)
+    if not helmet then
+        print('^1[mx-inv] toggleHelmetVisor: no helmet equipped.^0')
+        return
+    end
+    if data.helmetId and helmet.id ~= data.helmetId then
+        print('^1[mx-inv] toggleHelmetVisor: helmetId mismatch.^0')
+        return
+    end
+
+    if not helmet.metadata or not helmet.metadata.accessories then
+        print('^1[mx-inv] toggleHelmetVisor: no accessories mounted.^0')
+        return
+    end
+
+    -- Determine which accessory slot is mounted (take first found)
+    local mountedSlot = nil
+    for s, _ in pairs(helmet.metadata.accessories) do
+        mountedSlot = s; break
+    end
+    if not mountedSlot then
+        TriggerClientEvent('mx-inv:client:notify', src, 'Nenhum acessório montado no capacete!', 'error')
+        return
+    end
+
+    helmet.metadata.visorDown = not (helmet.metadata.visorDown or false)
+    local newVisorDown = helmet.metadata.visorDown
+    local accessoryName = helmet.metadata.accessories[mountedSlot].name
+
+    print(string.format('^2[mx-inv] Toggled helmet visor: slot=%s acc=%s visorDown=%s^0', mountedSlot, accessoryName,
+        tostring(newVisorDown)))
+
+    -- Sync drawable + screen effect
+    SyncHelmetAccessory(src, helmet.name, mountedSlot, accessoryName, newVisorDown)
+
+    -- Trigger visor-flip animation on client
+    TriggerClientEvent('mx-inv:client:playVisorAnim', src, newVisorDown)
+
     local player = MX_GetPlayer(src)
     if player then DB.SavePlayer(player.identifier, containerMap) end
     UpdateClientInventory(src)

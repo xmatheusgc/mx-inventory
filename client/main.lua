@@ -235,6 +235,130 @@ Citizen.CreateThread(function()
     end
 end)
 
+-- ── Visor Toggle Keybind (Hold N) ─────────────────────────────────────
+local visorKeyPressedAt    = nil
+local visorActionTriggered = false
+local visorKeybindThread   = false
+local VISOR_HOLD_MS        = 300 -- milliseconds to hold before triggering
+
+local function PlayVisorEffects()
+    Citizen.CreateThread(function()
+        local ped = PlayerPedId()
+
+        -- Figure out if visor is currently up or down by checking current prop
+        -- Based on items.lua: 118 (NVG down), 120 (Thermal down)
+        -- 119 (NVG up), 121 (Thermal up)
+        local currDrawable = GetPedPropIndex(ped, 0)
+
+        local isCurrentlyDown = false
+        local animDict = 'anim@mp_helmets@on_foot'
+        local animName = 'visor_down'
+
+        local found = false
+        if Items then
+            for _, itemDef in pairs(Items) do
+                if itemDef.type == 'helmet' and itemDef.equipment and itemDef.equipment.accessoryDrawables then
+                    for _, accData in pairs(itemDef.equipment.accessoryDrawables) do
+                        if currDrawable == accData.visorDown then
+                            isCurrentlyDown = true
+                            animDict = accData.animDict or 'anim@mp_helmets@on_foot'
+                            animName = accData.animUp or 'visor_up'
+                            found = true
+                            break
+                        elseif currDrawable == accData.visorUp then
+                            isCurrentlyDown = false
+                            animDict = accData.animDict or 'anim@mp_helmets@on_foot'
+                            animName = accData.animDown or 'visor_down'
+                            found = true
+                            break
+                        end
+                    end
+                end
+                if found then break end
+            end
+        end
+
+        if not found then
+            local isGoggles = (currDrawable >= 115 and currDrawable <= 119)
+            -- Down states for NVG/Thermal based on items.lua (116 = NVG down, 118 = Thermal down).
+            -- Also handling common female down states (115, 117) and other common down visors (120, 122)
+            if currDrawable == 115 or currDrawable == 116 or currDrawable == 117 or currDrawable == 118 or currDrawable == 120 or currDrawable == 122 then
+                isCurrentlyDown = true
+            end
+
+            if isGoggles then
+                animName = isCurrentlyDown and 'goggles_up' or 'goggles_down'
+            else
+                animName = isCurrentlyDown and 'visor_up' or 'visor_down'
+            end
+        end
+
+        if GetFollowPedCamViewMode() == 4 then
+            animName = animName:gsub('goggles', 'visor')
+            animName = 'pov_' .. animName
+        end
+        RequestAnimDict(animDict)
+        local t = 0
+        while not HasAnimDictLoaded(animDict) and t < 20 do
+            Wait(50)
+            t = t + 1
+        end
+
+        if HasAnimDictLoaded(animDict) then
+            -- Full upper-body animation (48), play speed 8.0, blend out 1.0, duration -1
+            TaskPlayAnim(ped, animDict, animName, 8.0, 1.0, -1, 48, 0, false, false, false)
+
+            -- Wait until animation reaches exactly 39% (when hand touches visor or grabs it)
+            local timeout = GetGameTimer()
+            while GetEntityAnimCurrentTime(ped, animDict, animName) < 0.39 do
+                Wait(0)
+                if GetGameTimer() - timeout > 1000 then break end
+            end
+
+            -- Exactly here is where the prop changes and sound plays
+            PlaySoundFrontend(-1, 'HELMET_ON', 'GTAO_FM_Events_Soundset', true)
+            TriggerServerEvent('mx-inv:server:toggleHelmetVisor', {})
+
+            -- Let animation finish (stop after a brief moment)
+            Wait(500)
+            StopAnimTask(ped, animDict, animName, 1.0)
+            RemoveAnimDict(animDict)
+        else
+            -- Fallback if anim fails
+            TriggerServerEvent('mx-inv:server:toggleHelmetVisor', {})
+        end
+    end)
+end
+
+RegisterCommand('+toggleVisor', function()
+    if visorKeybindThread then return end
+    visorKeyPressedAt = GetGameTimer()
+    visorActionTriggered = false
+    visorKeybindThread = true
+
+    Citizen.CreateThread(function()
+        while visorKeyPressedAt do
+            Wait(0)
+            if visorKeyPressedAt and not visorActionTriggered and (GetGameTimer() - visorKeyPressedAt) >= VISOR_HOLD_MS then
+                visorActionTriggered = true
+                PlayVisorEffects()
+            end
+        end
+        visorKeybindThread = false
+    end)
+end, false)
+
+RegisterCommand('-toggleVisor', function()
+    visorKeyPressedAt = nil
+end, false)
+
+RegisterKeyMapping('+toggleVisor', 'Abaixar/Levantar Viseira do Capacete', 'keyboard', 'n')
+
+-- Server fires this back after a successful visor toggle (no sound/anim here anymore)
+RegisterNetEvent('mx-inv:client:playVisorAnim', function(visorDown)
+    print(string.format('[mx-inv] playVisorAnim received: visorDown=%s', tostring(visorDown)))
+end)
+
 -- Update Equipment Visuals
 RegisterNetEvent('mx-inv:client:updateEquipment', function(itemName, isEquipping, ammoToLoad, attachments)
     print('[mx-inv] Debug Equip: Updating ' ..
@@ -281,15 +405,22 @@ RegisterNetEvent('mx-inv:client:updateEquipment', function(itemName, isEquipping
         end
     end
 
-    -- Clothing Logic (Vest/Bag/Helmet)
-    if eq.componentId and eq.drawableId then
+    -- Clothing / Prop Logic (Vest/Bag/Helmet/etc.)
+    if eq.propId ~= nil and eq.drawableId then
+        -- GTA V prop (hat/helmet/glasses): use SetPedPropIndex
+        if isEquipping then
+            SetPedPropIndex(ped, eq.propId, eq.drawableId, eq.textureId or 0, true)
+            print(string.format('[mx-inv] Applied prop: slot=%d drawable=%d texture=%d', eq.propId, eq.drawableId,
+                eq.textureId or 0))
+        else
+            ClearPedProp(ped, eq.propId)
+            print('[mx-inv] Cleared prop slot ' .. eq.propId)
+        end
+    elseif eq.componentId and eq.drawableId then
+        -- GTA V clothing component: use SetPedComponentVariation
         if isEquipping then
             SetPedComponentVariation(ped, eq.componentId, eq.drawableId, eq.textureId or 0, 2)
         else
-            -- Reset to default/skin?
-            -- For simplicity, we set to 0 (empty) for vests/bags.
-            -- But for heads/legs this might mean 'naked'.
-            -- Ideally we save the 'previous' state, but for this task stripping to 0 for vest(9)/bag(5) is usually 'safe-ish'.
             SetPedComponentVariation(ped, eq.componentId, 0, 0, 2)
         end
     end
@@ -479,6 +610,71 @@ RegisterNetEvent('mx-inv:client:removeAttachmentComponent', function(weaponHashN
         print('[mx-inv] Removed component: ' .. componentHashName .. ' from ' .. weaponHashName)
     end
 end)
+
+-- ============================================================
+-- HELMET ACCESSORY CLIENT HANDLERS
+-- ============================================================
+
+-- NUI: Attach accessory to equipped helmet
+RegisterNUICallback('attachToHelmet', function(data, cb)
+    TriggerServerEvent('mx-inv:server:attachToHelmet', {
+        helmetId        = data.helmetId,
+        accessoryItem   = data.accessoryItem,
+        accessoryItemId = data.accessoryItemId,
+        fromContainerId = data.fromContainerId
+    })
+    cb('ok')
+end)
+
+-- NUI: Remove accessory from equipped helmet
+RegisterNUICallback('removeHelmetAccessory', function(data, cb)
+    TriggerServerEvent('mx-inv:server:removeHelmetAccessory', {
+        helmetId      = data.helmetId,
+        accessorySlot = data.accessorySlot,
+        toContainerId = data.toContainerId,
+        toSlot        = data.toSlot
+    })
+    cb('ok')
+end)
+
+-- NUI: Toggle helmet visor (activate / deactivate accessory effect)
+RegisterNUICallback('toggleHelmetVisor', function(data, cb)
+    TriggerServerEvent('mx-inv:server:toggleHelmetVisor', {
+        helmetId = data.helmetId
+    })
+    cb('ok')
+end)
+
+-- Server → Client: Apply drawable and screen effect for helmet accessory
+RegisterNetEvent('mx-inv:client:applyHelmetAccessory', function(payload)
+    local ped = PlayerPedId()
+
+    -- Change helmet prop drawable (prop slot 0 = head hat/helmet)
+    -- propId should be 0 for head props; falls back to componentId for backwards compat
+    local propSlot = payload.propId or payload.componentId or 0
+    SetPedPropIndex(ped, propSlot, payload.drawableId, payload.textureId or 0, true)
+
+    -- Activate / deactivate screen effects based on accessory type and visor state
+    local slot = payload.slot
+    local accessoryName = payload.accessoryName
+    local active = payload.visorDown == true
+
+    if accessoryName == 'nvg' then
+        SetNightvision(active)
+        SetSeethrough(false)
+    elseif accessoryName == 'thermal_monocle' then
+        SetSeethrough(active)
+        SetNightvision(false)
+    else
+        -- No accessory (removed) or unrecognized: ensure effects are off
+        SetNightvision(false)
+        SetSeethrough(false)
+    end
+
+    print(string.format('[mx-inv] Helmet accessory sync: slot=%s drawable=%d visorDown=%s',
+        tostring(slot), payload.drawableId or -1, tostring(payload.visorDown)))
+end)
+
 
 -- Set Ammo & Play Reload Animation (Native Feel)
 RegisterNetEvent('mx-inv:client:setAmmoAndReload', function(weaponHashName, ammoCount)

@@ -3,7 +3,8 @@ import type { Item } from '../store/inventoryStore';
 import { useInventoryStore } from '../store/inventoryStore';
 import { useDroppable, useDraggable } from '@dnd-kit/core';
 import { createPortal } from 'react-dom';
-import { ArrowDownToLine } from 'lucide-react';
+import { ArrowDownToLine, Eye, EyeOff } from 'lucide-react';
+import { fetchNui } from '../utils/nui';
 
 interface ItemDetailsWindowProps {
     item: Item;
@@ -131,6 +132,110 @@ const AttachmentSlot: React.FC<{
     );
 };
 
+// Draggable installed helmet accessory content
+const DraggableHelmetAccessory: React.FC<{
+    accessoryName: string;
+    helmetId: string;
+    helmetContainerId: string;
+    slotId: string;
+    itemDefs: any;
+}> = ({ accessoryName, helmetId, helmetContainerId, slotId, itemDefs }) => {
+    const accessoryDef = itemDefs[accessoryName];
+    const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+        id: `installed-helmet-acc-${helmetId}-${slotId}`,
+        data: {
+            type: 'installed-helmet-accessory',
+            accessoryName,
+            helmetId,
+            helmetContainerId,
+            slotId,
+            name: accessoryName,
+            image: accessoryDef?.image,
+            label: accessoryDef?.label || accessoryName,
+            size: accessoryDef?.size || { x: 1, y: 1 },
+        }
+    });
+
+    const style: React.CSSProperties = {
+        transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
+        zIndex: isDragging ? 200 : undefined,
+        opacity: isDragging ? 0.5 : 1,
+    };
+
+    return (
+        <div ref={setNodeRef} {...listeners} {...attributes} style={style} className="w-10 h-10 cursor-grab active:cursor-grabbing">
+            {accessoryDef?.image ? (
+                <img
+                    src={`/images/${accessoryDef.image || 'placeholder.png'}`}
+                    alt={accessoryDef.label}
+                    className="w-full h-full object-contain drop-shadow-lg pointer-events-none"
+                />
+            ) : (
+                <span className="text-[10px] text-zinc-400">{accessoryName}</span>
+            )}
+        </div>
+    );
+};
+
+// ── Helmet Accessory Slot (Droppable) ──────────────────────────────────
+const HelmetAccessorySlot: React.FC<{
+    slotId: string;
+    label: string;
+    helmetId: string;
+    helmetContainerId: string;
+    mountedAccessory: { name: string; id: string } | null;
+    supported: boolean;
+    itemDefs: any;
+}> = ({ slotId, label, helmetId, helmetContainerId, mountedAccessory, itemDefs }) => {
+    const droppableId = `helmet-acc-${helmetId}-${slotId}`;
+    const dragCompat = useInventoryStore(state => state.dragCompatibility);
+    const isCompatibleTarget = dragCompat && dragCompat.targetIds.has(droppableId);
+
+    const { setNodeRef, isOver } = useDroppable({
+        id: droppableId,
+        data: { type: 'helmet-accessory-slot', slotId, helmetId, helmetContainerId }
+    });
+
+    return (
+        <div className="flex flex-col items-center gap-1">
+            <div
+                ref={setNodeRef}
+                className={`
+                    relative w-14 h-14 bg-black/40 border rounded flex items-center justify-center
+                    transition-all duration-200
+                    ${isOver ? 'border-primary/80 bg-primary/10 scale-105' : 'border-white/10 hover:border-white/20'}
+                    ${mountedAccessory ? 'border-green-500/40 bg-green-900/10' : ''}
+                    ${isCompatibleTarget && !mountedAccessory ? 'ring-2 ring-green-400/80 border-green-400/60 shadow-[0_0_12px_rgba(74,222,128,0.3)]' : ''}
+                `}
+                title={mountedAccessory ? 'Arraste para remover' : `Solte ${label} aqui`}
+            >
+                {mountedAccessory ? (
+                    <DraggableHelmetAccessory
+                        accessoryName={mountedAccessory.name}
+                        helmetId={helmetId}
+                        helmetContainerId={helmetContainerId}
+                        slotId={slotId}
+                        itemDefs={itemDefs}
+                    />
+                ) : (
+                    <span className="text-[10px] text-zinc-500">+</span>
+                )}
+                {isCompatibleTarget && !mountedAccessory && (
+                    <div className="absolute inset-0 bg-green-500/15 flex items-center justify-center pointer-events-none animate-pulse rounded">
+                        <ArrowDownToLine className="w-4 h-4 text-white drop-shadow-lg" />
+                    </div>
+                )}
+                {mountedAccessory && (
+                    <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full border border-black" />
+                )}
+            </div>
+            <span className={`text-[9px] uppercase tracking-wider ${mountedAccessory ? 'text-green-400' : 'text-zinc-500'}`}>
+                {label}
+            </span>
+        </div>
+    );
+};
+
 export const ItemDetailsWindow: React.FC<ItemDetailsWindowProps> = ({ item, initialPosition, onClose }) => {
     // Initial random or centered position
     const [position, setPosition] = useState(initialPosition || { x: window.innerWidth / 2 + 50, y: window.innerHeight / 2 - 100 });
@@ -174,8 +279,11 @@ export const ItemDetailsWindow: React.FC<ItemDetailsWindowProps> = ({ item, init
     };
 
     const isWeapon = item.type?.startsWith('weapon_');
+    const isHelmet = item.type === 'helmet';
     const weaponDef = defs[item.name];
+    const helmetDef = defs[item.name];
     const supportedAttachments = weaponDef?.equipment?.supportedAttachments || {};
+    const supportedAccessories: string[] = helmetDef?.equipment?.supportedAccessories || [];
 
     // Read live item data from the store so attachments update immediately
     const containers = useInventoryStore(state => state.containers);
@@ -192,6 +300,8 @@ export const ItemDetailsWindow: React.FC<ItemDetailsWindowProps> = ({ item, init
     }
 
     const currentAttachments = liveItem.metadata?.attachments || {};
+    const mountedAccessories = (liveItem.metadata?.accessories || {}) as Record<string, { name: string; id: string }>;
+    const visorDown: boolean = liveItem.metadata?.visorDown || false;
 
     // Find the weapon's containerId (equipment slot or container)
     // We infer from the store
@@ -209,6 +319,14 @@ export const ItemDetailsWindow: React.FC<ItemDetailsWindowProps> = ({ item, init
         { id: 'grip', label: 'GRP' },
         { id: 'skin', label: 'SKN' },
     ];
+
+    const hasMountedAccessory = Object.keys(mountedAccessories).length > 0;
+
+    const handleToggleVisor = () => {
+        fetchNui('toggleHelmetVisor', { helmetId: item.id });
+        // Optimistic local toggle via store
+        useInventoryStore.getState().toggleHelmetVisor(item.id);
+    };
 
     return createPortal(
         <div
@@ -287,6 +405,46 @@ export const ItemDetailsWindow: React.FC<ItemDetailsWindowProps> = ({ item, init
                         </div>
                         {Object.keys(supportedAttachments).length === 0 && (
                             <p className="text-[10px] text-zinc-600 text-center italic">This weapon does not support attachments.</p>
+                        )}
+                    </div>
+                )}
+
+                {/* Helmet Accessory Section */}
+                {isHelmet && (
+                    <div className="flex flex-col gap-3 pt-2 border-t border-white/5">
+                        <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-text-muted uppercase tracking-wider">Acessórios</span>
+                            {hasMountedAccessory && (
+                                <button
+                                    onClick={handleToggleVisor}
+                                    className={`flex items-center gap-1 text-[10px] px-2 py-1 rounded border transition-all ${visorDown
+                                        ? 'bg-green-900/40 border-green-500/60 text-green-400 hover:bg-green-900/60'
+                                        : 'bg-zinc-800 border-white/10 text-zinc-400 hover:border-white/30 hover:text-white'
+                                        }`}
+                                    title={visorDown ? 'Levantar viseira (desativar)' : 'Abaixar viseira (ativar)'}
+                                >
+                                    {visorDown
+                                        ? <><Eye className="w-3 h-3" /> Ativo</>
+                                        : <><EyeOff className="w-3 h-3" /> Inativo</>}
+                                </button>
+                            )}
+                        </div>
+                        <div className="flex gap-3 justify-center">
+                            {supportedAccessories.map(slotId => (
+                                <HelmetAccessorySlot
+                                    key={slotId}
+                                    slotId={slotId}
+                                    label={slotId.toUpperCase()}
+                                    helmetId={item.id}
+                                    helmetContainerId={weaponContainerId}
+                                    mountedAccessory={mountedAccessories[slotId] || null}
+                                    supported={true}
+                                    itemDefs={defs}
+                                />
+                            ))}
+                        </div>
+                        {supportedAccessories.length === 0 && (
+                            <p className="text-[10px] text-zinc-600 text-center italic">Este capacete não suporta acessórios.</p>
                         )}
                     </div>
                 )}

@@ -224,9 +224,28 @@ Items = {
         type = "helmet",
         image = "helmet.png",
         equipment = {
-            componentId = 0,
-            drawableId = 120,
-            textureId = 0
+            propId = 0,       -- head prop slot 0 (SetPedPropIndex)
+            drawableId = 150, -- base: no accessories
+            textureId = 0,
+            -- Accessory slots: list of slot IDs this helmet can mount
+            supportedAccessories = { 'visor' },
+            -- Per-item drawable IDs depending on visor state
+            accessoryDrawables = {
+                nvg             = {
+                    visorDown = 116,
+                    visorUp = 117,
+                    animDict = 'anim@mp_helmets@on_foot',
+                    animUp = 'goggles_up', --visor_up or goggles_up
+                    animDown = 'goggles_down' --visor_down or goggles_down
+                },
+                thermal_monocle = {
+                    visorDown = 118,
+                    visorUp = 119,
+                    animDict = 'anim@mp_helmets@on_foot',
+                    animUp = 'goggles_up', --visor_up or goggles_up
+                    animDown = 'goggles_down' --visor_down or goggles_down
+                },
+            }
         }
     },
     ['armor'] = {
@@ -240,6 +259,26 @@ Items = {
             drawableId = 15,
             textureId = 0
         }
+    },
+
+    -- ============================================================
+    -- HELMET ACCESSORIES
+    -- ============================================================
+    ['nvg'] = {
+        label = "Night Vision Goggles",
+        weight = 0.3,
+        size = { x = 1, y = 1 },
+        type = "helmet_accessory",
+        image = "nvg.png",
+        helmetAccessory = { slot = 'visor' }
+    },
+    ['thermal_monocle'] = {
+        label = "Thermal Monocle",
+        weight = 0.2,
+        size = { x = 1, y = 1 },
+        type = "helmet_accessory",
+        image = "thermal.png",
+        helmetAccessory = { slot = 'visor' }
     },
     ['rig_st_tipo_4'] = {
         label        = "ST Tipo 4",
