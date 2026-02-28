@@ -120,31 +120,43 @@ local function GetFormattedInventory(src)
         itemDefs = ItemDefs
     }
 
-    -- Dynamic Containers from Equipment
-    if containers.equipment then
-        for _, item in pairs(containers.equipment) do
-            local def = ItemDefs[item.name]
-            -- Check if item definition has container data
-            if def and def.container then
-                local containerId = item.name -- Use item name as storage ID (Shared storage per item type)
+    -- Dynamic Containers from ALL valid container items
+    local function parseContainerItem(item)
+        if not item or not item.name then return end
+        local def = ItemDefs[item.name]
+        if def and def.container then
+            local containerId = item.id -- Use item UUID as storage ID
 
-                -- Lazy Init: Create storage if missing
-                if not containers[containerId] then
-                    containers[containerId] = {}
-                end
+            -- Lazy Init: Create storage if missing
+            if not containers[containerId] then
+                containers[containerId] = {}
+            end
 
-                payload[containerId] = {
-                    id = containerId,
-                    type = def.type, -- 'vest', 'backpack', etc.
-                    label = def.label,
-                    size = def.container.size,
-                    items = containers[containerId],
-                    weight = GetContainerWeight(containers[containerId]),
-                    maxWeight = def.container.maxWeight
-                }
+            payload[containerId] = {
+                id = containerId,
+                name = item.name,
+                type = def.type, -- 'vest', 'backpack', etc.
+                label = def.label,
+                size = def.container.size,
+                items = containers[containerId],
+                weight = GetContainerWeight(containers[containerId]),
+                maxWeight = def.container.maxWeight
+            }
+        end
+    end
+
+    -- Iterate through EVERY container's items so bags-in-bags are formatted
+    for _, containerItems in pairs(containers) do
+        if type(containerItems) == 'table' then
+            for _, item in pairs(containerItems) do
+                parseContainerItem(item)
             end
         end
     end
+
+    local keys = ""
+    for k, _ in pairs(payload) do keys = keys .. k .. ", " end
+    print('^3[mx-inv] Payload generated with keys: ' .. keys .. '^0')
 
     return payload
 end
@@ -386,17 +398,29 @@ local function LoadPlayer(src)
                 if not item.id then item.id = GenerateUUID() end
             end
         end
-        for _, containerName in ipairs({ 'rig_st_tipo_4', 'mochila_tatica_expansivel_luc' }) do
-            if Inventory[src][containerName] then
-                for _, item in ipairs(Inventory[src][containerName]) do
-                    if not item.id then item.id = GenerateUUID() end
-                end
-            end
-        end
         if Inventory[src].equipment then
             for _, item in pairs(Inventory[src].equipment) do
                 if item and not item.id then item.id = GenerateUUID() end
             end
+        end
+
+        -- Migrate legacy container data (name-based) to UUID-based storage
+        local function migrateLegacyContainer(ci)
+            if ci and (ci.name == 'rig_st_tipo_4' or ci.name == 'mochila_tatica_expansivel_luc') then
+                local legacyName = ci.name
+                if Inventory[src][legacyName] and #Inventory[src][legacyName] > 0 then
+                    print('^3[mx-inv] Migrating legacy container ' .. legacyName .. ' to UUID ' .. ci.id .. '^0')
+                    Inventory[src][ci.id] = Inventory[src][legacyName]
+                    Inventory[src][legacyName] = nil
+                end
+            end
+        end
+
+        if Inventory[src].equipment then
+            for _, item in pairs(Inventory[src].equipment) do migrateLegacyContainer(item) end
+        end
+        if Inventory[src].player then
+            for _, item in ipairs(Inventory[src].player) do migrateLegacyContainer(item) end
         end
 
         print('^3[mx-inv] Loaded Equipment for ' .. player.name .. ': ' .. json.encode(Inventory[src].equipment) .. '^0')
@@ -411,61 +435,6 @@ local function LoadPlayer(src)
     end
 end
 
--- Helper: Get Formatted Inventory Payload
-local function GetFormattedInventory(src)
-    local containers = Inventory[src]
-    if not containers then return nil end
-
-    local payload = {
-        player = {
-            id = 'player-inv',
-            type = 'player',
-            label = 'Player Inventory',
-            size = Config.Inventory.Slots,
-            items = containers.player or {},
-            maxWeight = Config.Inventory.MaxWeight,
-            weight = GetContainerWeight(containers.player or {})
-        },
-        equipment = containers.equipment,
-        itemDefs = ItemDefs
-    }
-
-    -- Dynamic Containers from Equipment
-    if containers.equipment then
-        for _, item in pairs(containers.equipment) do
-            local def = ItemDefs[item.name]
-            -- Check if item definition has container data
-            if def and def.container then
-                local containerId = item.name -- Use item name as storage ID (Shared storage per item type)
-
-                -- Lazy Init: Create storage if missing
-                if not containers[containerId] then
-                    containers[containerId] = {}
-                end
-
-                payload[containerId] = {
-                    id = containerId,
-                    type = def.type, -- 'vest', 'backpack', etc.
-                    label = def.label,
-                    size = def.container.size,
-                    items = containers[containerId],
-                    weight = GetContainerWeight(containers[containerId]),
-                    maxWeight = def.container.maxWeight
-                }
-            end
-        end
-    end
-
-    return payload
-end
-
--- Helper: Update Client Inventory (Refresh)
-local function UpdateClientInventory(src)
-    local payload = GetFormattedInventory(src)
-    if payload then
-        TriggerClientEvent('mx-inv:client:updateInventory', src, payload)
-    end
-end
 
 -- Open Inventory Function
 local function OpenInventory(src)
@@ -695,6 +664,125 @@ RegisterNetEvent('mx-inv:server:foldItem', function(data)
     local containerId = data.container
     local itemId = data.id -- unique ID
 
+    -- Helper: Check if a specific anchor position is clear for the expanded size
+    local function CheckAnchorClear(containerItems, targetItemId, anchorX, anchorY, expandedSz, containerWidth,
+                                    containerHeight, validSlotsTable)
+        local needW = expandedSz.x
+        local needH = expandedSz.y
+
+        -- 1. Boundary check
+        if anchorX < 1 or anchorY < 1 or anchorX + needW - 1 > containerWidth or anchorY + needH - 1 > containerHeight then
+            print(string.format('^3[mx-inv][UNFOLD] Anchor (%d,%d) BOUNDARY FAIL: need %dx%d, grid=%dx%d^0',
+                anchorX, anchorY, needW, needH, containerWidth, containerHeight))
+            return false
+        end
+
+        -- 2. ValidSlots mask check
+        if validSlotsTable and #validSlotsTable > 0 then
+            for px = 0, needW - 1 do
+                for py = 0, needH - 1 do
+                    local cx = anchorX + px
+                    local cy = anchorY + py
+                    local found = false
+                    for _, vs in ipairs(validSlotsTable) do
+                        if vs.x == cx and vs.y == cy then
+                            found = true; break
+                        end
+                    end
+                    if not found then
+                        print(string.format('^3[mx-inv][UNFOLD] Anchor (%d,%d) MASK FAIL at slot (%d,%d)^0',
+                            anchorX, anchorY, cx, cy))
+                        return false
+                    end
+                end
+            end
+        end
+
+        -- 3. Collision check against all OTHER items
+        -- Use ItemDefs as the authoritative size source (handles DB corruption / stale sizes).
+        -- Rotation is accounted for by swapping W/H when other.rotated == true.
+        for _, other in ipairs(containerItems) do
+            if other.id ~= targetItemId then
+                local otherDef = ItemDefs[other.name]
+                local oRotated = other.rotated == true
+                local baseW, baseH
+
+                if otherDef then
+                    if other.folded and otherDef.foldedSize then
+                        -- Foldable item currently folded
+                        baseW = otherDef.foldedSize.x
+                        baseH = otherDef.foldedSize.y
+                    elseif not other.folded and otherDef.expandedSize then
+                        -- Foldable item currently expanded
+                        baseW = otherDef.expandedSize.x
+                        baseH = otherDef.expandedSize.y
+                    else
+                        -- Regular item: authoritative size from ItemDef
+                        baseW = otherDef.size and otherDef.size.x or 1
+                        baseH = otherDef.size and otherDef.size.y or 1
+                    end
+                else
+                    -- No ItemDef: fall back to stored size
+                    local oSize = other.size or { x = 1, y = 1 }
+                    baseW = oSize.x
+                    baseH = oSize.y
+                end
+
+                -- Apply rotation to get the VISUAL footprint
+                local oW = oRotated and baseH or baseW
+                local oH = oRotated and baseW or baseH
+
+                local overlapX = anchorX < other.slot.x + oW and anchorX + needW > other.slot.x
+                local overlapY = anchorY < other.slot.y + oH and anchorY + needH > other.slot.y
+                if overlapX and overlapY then
+                    print(string.format(
+                        '^3[mx-inv][UNFOLD] Anchor (%d,%d) COLLISION with \'%s\' at slot (%d,%d) visual-size %dx%d (rotated=%s)^0',
+                        anchorX, anchorY, tostring(other.name), other.slot.x, other.slot.y, oW, oH,
+                        tostring(oRotated)))
+                    return false
+                end
+            end
+        end
+
+        return true
+    end
+
+    -- Helper: Try multiple anchor positions so the item can grow up/left/right/down.
+    -- The expanded item must always "cover" the item's current slot (which is the folded anchor).
+    -- Returns the best anchor {x, y} or nil if no position works.
+    local function FindBestUnfoldAnchor(containerItems, item, targetItemId, expandedSz, foldedSz, containerWidth,
+                                        containerHeight, validSlotsTable)
+        local curX = item.slot.x
+        local curY = item.slot.y
+        local needW = expandedSz.x
+        local needH = expandedSz.y
+
+        local minAnchorX = math.max(1, curX - needW + 1)
+        local maxAnchorX = curX
+        local minAnchorY = math.max(1, curY - needH + 1)
+        local maxAnchorY = curY
+
+        print(string.format(
+            '^3[mx-inv][UNFOLD] Item \'' .. tostring(item.name) .. '\' at (%d,%d), expanding to %dx%d in grid %dx%d^0',
+            curX, curY, needW, needH, containerWidth, containerHeight))
+        print(string.format(
+            '^3[mx-inv][UNFOLD] Trying anchors X:[%d..%d] Y:[%d..%d]^0',
+            minAnchorX, maxAnchorX, minAnchorY, maxAnchorY))
+
+        for ay = maxAnchorY, minAnchorY, -1 do
+            for ax = maxAnchorX, minAnchorX, -1 do
+                if CheckAnchorClear(containerItems, targetItemId, ax, ay, expandedSz, containerWidth, containerHeight,
+                        validSlotsTable) then
+                    print(string.format('^2[mx-inv][UNFOLD] Best anchor found: (%d,%d)^0', ax, ay))
+                    return { x = ax, y = ay }
+                end
+            end
+        end
+
+        print('^1[mx-inv][UNFOLD] No valid anchor found!^0')
+        return nil
+    end
+
     local containerItems = nil
     if containerId == 'player-inv' or containerId == 'player' then
         containerItems = containerMap.player
@@ -702,7 +790,23 @@ RegisterNetEvent('mx-inv:server:foldItem', function(data)
         local equipSlotId = string.sub(containerId, 7)
         local eqItem = containerMap.equipment[equipSlotId]
         if eqItem and eqItem.id == itemId then
-            eqItem.folded = not eqItem.folded
+            -- Equipped containers: cannot fold if non-empty
+            if not eqItem.folded then
+                local subInv = containerMap[eqItem.id]
+                if subInv and #subInv > 0 then
+                    TriggerClientEvent('mx-inv:client:notify', src, 'Este item não está vazio e não pode ser dobrado!',
+                        'error')
+                    return
+                end
+            end
+            -- Size update
+            local def = ItemDefs[eqItem.name]
+            local newFolded = not eqItem.folded
+            if def then
+                eqItem.size = newFolded and (def.foldedSize or eqItem.size) or
+                    (def.expandedSize or def.size or eqItem.size)
+            end
+            eqItem.folded = newFolded
             local player = MX_GetPlayer(src)
             if player then DB.SavePlayer(player.identifier, containerMap) end
             UpdateClientInventory(src)
@@ -716,7 +820,105 @@ RegisterNetEvent('mx-inv:server:foldItem', function(data)
 
     for i, item in ipairs(containerItems) do
         if item.id == itemId then
-            item.folded = not item.folded
+            local def = ItemDefs[item.name]
+            local newFolded = not item.folded
+
+            if not newFolded then
+                -- === UNFOLDING: validate space and find best anchor ===
+                local expandedSz = (def and def.expandedSize) or (def and def.size) or
+                    { x = item.size and item.size.x or 1, y = item.size and item.size.y or 1 }
+                local foldedSz = (def and def.foldedSize) or item.size or { x = 1, y = 1 }
+
+                -- Resolve container grid size
+                local gridWidth = Config.Inventory.Slots.width
+                local gridHeight = Config.Inventory.Slots.height
+                local gridResolved = false
+                if containerId ~= 'player-inv' and containerId ~= 'player' then
+                    for _, eqItm in pairs(containerMap.equipment or {}) do
+                        if eqItm and eqItm.id == containerId then
+                            local pDef = ItemDefs[eqItm.name]
+                            if pDef and pDef.container then
+                                gridWidth    = pDef.container.size.width
+                                gridHeight   = pDef.container.size.height
+                                gridResolved = true
+                                print('^3[mx-inv][UNFOLD] Grid from equip item \'' ..
+                                    tostring(eqItm.name) .. '\': ' .. gridWidth .. 'x' .. gridHeight .. '^0')
+                            end
+                            break
+                        end
+                    end
+                    if not gridResolved and containerMap.player then
+                        for _, pItm in ipairs(containerMap.player) do
+                            if pItm.id == containerId then
+                                local pDef = ItemDefs[pItm.name]
+                                if pDef and pDef.container then
+                                    gridWidth    = pDef.container.size.width
+                                    gridHeight   = pDef.container.size.height
+                                    gridResolved = true
+                                    print('^3[mx-inv][UNFOLD] Grid from player item \'' ..
+                                        tostring(pItm.name) .. '\': ' .. gridWidth .. 'x' .. gridHeight .. '^0')
+                                end
+                                break
+                            end
+                        end
+                    end
+                    if not gridResolved then
+                        -- Last resort: also walk ALL sub-containers to find nested bags
+                        for _, containerItems2 in pairs(containerMap) do
+                            if type(containerItems2) == 'table' then
+                                for _, itm2 in ipairs(containerItems2) do
+                                    if itm2.id == containerId then
+                                        local pDef = ItemDefs[itm2.name]
+                                        if pDef and pDef.container then
+                                            gridWidth    = pDef.container.size.width
+                                            gridHeight   = pDef.container.size.height
+                                            gridResolved = true
+                                            print('^3[mx-inv][UNFOLD] Grid from nested item \'' ..
+                                                tostring(itm2.name) .. '\': ' .. gridWidth .. 'x' .. gridHeight .. '^0')
+                                        end
+                                        break
+                                    end
+                                end
+                            end
+                            if gridResolved then break end
+                        end
+                    end
+                end
+                if not gridResolved then
+                    print('^1[mx-inv][UNFOLD] WARNING: Could not resolve grid for container ' ..
+                        tostring(containerId) ..
+                        ', falling back to player inv size ' .. gridWidth .. 'x' .. gridHeight .. '^0')
+                end
+
+                local bestAnchor = FindBestUnfoldAnchor(containerItems, item, itemId, expandedSz, foldedSz, gridWidth,
+                    gridHeight, nil)
+
+                if not bestAnchor then
+                    TriggerClientEvent('mx-inv:client:notify', src, 'Não há espaço para desenrolar o item aqui!', 'error')
+                    UpdateClientInventory(src) -- Re-sync to snap visuals back
+                    return
+                end
+
+                -- Apply best anchor and expanded size
+                item.slot = bestAnchor
+                item.size = expandedSz
+                print('^2[mx-inv] Unfolded ' ..
+                    tostring(item.name) .. ' at anchor ' .. bestAnchor.x .. ',' .. bestAnchor.y .. '^0')
+            else
+                -- === FOLDING: cannot fold if container has items ===
+                local subInv = containerMap[item.id]
+                if subInv and #subInv > 0 then
+                    TriggerClientEvent('mx-inv:client:notify', src, 'Este item não está vazio e não pode ser dobrado!',
+                        'error')
+                    return
+                end
+                -- Update size to folded
+                if def and def.foldedSize then
+                    item.size = def.foldedSize
+                end
+            end
+
+            item.folded = newFolded
             local player = MX_GetPlayer(src)
             if player then DB.SavePlayer(player.identifier, containerMap) end
             UpdateClientInventory(src)
@@ -750,6 +952,7 @@ RegisterNetEvent('mx-inv:server:moveItem', function(data)
             local equipSlotId = string.sub(id, 7)
             return containerMap.equipment, equipSlotId -- Return table, key
         end
+        if not containerMap[id] then containerMap[id] = {} end
         return containerMap[id], nil
     end
 
@@ -1028,6 +1231,9 @@ RegisterNetEvent('mx-inv:server:stackItems', function(data)
     -- Resolve container keys
     local fromKey = (fromContainerId == 'player-inv') and 'player' or fromContainerId
     local toKey = (toContainerId == 'player-inv') and 'player' or toContainerId
+
+    if not containerMap[fromKey] then containerMap[fromKey] = {} end
+    if not containerMap[toKey] then containerMap[toKey] = {} end
 
     local fromContainer = containerMap[fromKey]
     local toContainer = containerMap[toKey]

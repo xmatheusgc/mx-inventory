@@ -6,14 +6,16 @@ import { createPortal } from 'react-dom';
 
 interface ContainerWindowProps {
     containerId: string;
+    initialPosition?: { x: number; y: number };
     onClose: () => void;
+    dragHighlight?: any;
 }
 
-export const ContainerWindow: React.FC<ContainerWindowProps> = ({ containerId, onClose }) => {
+export const ContainerWindow: React.FC<ContainerWindowProps> = ({ containerId, initialPosition, onClose, dragHighlight }) => {
     const container = useInventoryStore(state => state.containers[containerId]);
 
     // Initial random or centered position
-    const [position, setPosition] = useState({ x: window.innerWidth / 2 - 200, y: window.innerHeight / 2 - 150 });
+    const [position, setPosition] = useState(initialPosition || { x: window.innerWidth / 2 - 200, y: window.innerHeight / 2 - 150 });
     const [isDragging, setIsDragging] = useState(false);
     const dragOffset = useRef({ x: 0, y: 0 });
 
@@ -52,7 +54,7 @@ export const ContainerWindow: React.FC<ContainerWindowProps> = ({ containerId, o
 
     if (!container) return null;
 
-    const layout = CONTAINER_LAYOUTS[container.id] || CONTAINER_LAYOUTS[container.label] ||
+    const layout = (container.name ? CONTAINER_LAYOUTS[container.name] : null) || CONTAINER_LAYOUTS[container.label] ||
         (container.type === 'vest' ? CONTAINER_LAYOUTS['vest'] : CONTAINER_LAYOUTS['backpack']);
 
     return createPortal(
@@ -96,6 +98,7 @@ export const ContainerWindow: React.FC<ContainerWindowProps> = ({ containerId, o
                                                 containerId={container.id}
                                                 droppableId={`${container.id}::pocket::${globalIndex}`}
                                                 region={pocket}
+                                                highlight={dragHighlight?.containerId === container.id ? dragHighlight : undefined}
                                             />
                                         </div>
                                     )
@@ -105,7 +108,10 @@ export const ContainerWindow: React.FC<ContainerWindowProps> = ({ containerId, o
                     </div>
                 ) : (
                     // Default Grid Layout if no specific layout found
-                    <Container containerId={container.id} />
+                    <Container
+                        containerId={container.id}
+                        highlight={dragHighlight?.containerId === container.id ? dragHighlight : undefined}
+                    />
                 )}
             </div>
         </div>,

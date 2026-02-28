@@ -7,6 +7,7 @@ import { ArrowDownToLine } from 'lucide-react';
 
 interface ItemDetailsWindowProps {
     item: Item;
+    initialPosition?: { x: number; y: number };
     onClose: () => void;
 }
 
@@ -130,9 +131,9 @@ const AttachmentSlot: React.FC<{
     );
 };
 
-export const ItemDetailsWindow: React.FC<ItemDetailsWindowProps> = ({ item, onClose }) => {
+export const ItemDetailsWindow: React.FC<ItemDetailsWindowProps> = ({ item, initialPosition, onClose }) => {
     // Initial random or centered position
-    const [position, setPosition] = useState({ x: window.innerWidth / 2 + 50, y: window.innerHeight / 2 - 100 });
+    const [position, setPosition] = useState(initialPosition || { x: window.innerWidth / 2 + 50, y: window.innerHeight / 2 - 100 });
     const [isDragging, setIsDragging] = useState(false);
     const dragOffset = useRef({ x: 0, y: 0 });
 

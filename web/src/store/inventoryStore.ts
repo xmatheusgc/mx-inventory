@@ -34,6 +34,7 @@ export interface Item {
         caliber?: string;        // Ammo caliber type
         attachments?: Record<string, string | null>; // slot -> attachment item name (e.g. { muzzle: 'suppressor_pistol', scope: null })
     };
+    isEquipment?: boolean; // Indicates if the item is currently in an equipment slot
 }
 
 interface GridSize {
@@ -43,6 +44,7 @@ interface GridSize {
 
 export interface ContainerData {
     id: string; // 'player', 'bag-123', etc.
+    name?: string; // The base item namespace (e.g. 'rig_st_tipo_4')
     type: 'player' | 'bag' | 'vest' | 'stash' | 'drop';
     label: string;
     size: GridSize;
@@ -65,7 +67,8 @@ interface InventoryState {
         toContainerId: string,
         itemName: string,
         targetSlot: { x: number; y: number },
-        rotated?: boolean
+        rotated?: boolean,
+        folded?: boolean
     ) => void;
     rotateItem: (containerId: string, itemName: string) => void;
     updateContainerWeight: (containerId: string, weight: number) => void;
@@ -82,13 +85,13 @@ interface InventoryState {
     removeAttachment: (weaponId: string, weaponContainerId: string, attachmentSlot: string, toContainerId: string, targetSlot?: { x: number; y: number }) => void;
 
     // UI Actions
-    openWindows: string[];
-    toggleWindow: (containerId: string) => void;
+    openWindows: { id: string, position?: { x: number, y: number } }[];
+    toggleWindow: (containerId: string, position?: { x: number, y: number }) => void;
     closeWindow: (containerId: string) => void;
 
     // Details Window
-    detailsWindows: Item[];
-    openDetails: (item: Item) => void;
+    detailsWindows: { item: Item, position?: { x: number, y: number } }[];
+    openDetails: (item: Item, position?: { x: number, y: number }) => void;
     closeDetails: (item: Item) => void;
 
     // Give Item
@@ -195,16 +198,16 @@ export const useInventoryStore = create<InventoryState>((set) => ({
     // UI State
     openWindows: [],
     setOpen: (isOpen: boolean) => set({ isOpen }),
-    toggleWindow: (containerId: string) => set((state: InventoryState) => {
-        const isOpen = state.openWindows.includes(containerId);
+    toggleWindow: (containerId: string, position?: { x: number, y: number }) => set((state: InventoryState) => {
+        const isOpen = state.openWindows.some(w => w.id === containerId);
         return {
             openWindows: isOpen
-                ? state.openWindows.filter(id => id !== containerId)
-                : [...state.openWindows, containerId]
+                ? state.openWindows.filter(w => w.id !== containerId)
+                : [...state.openWindows, { id: containerId, position }]
         };
     }),
     closeWindow: (containerId: string) => set((state: InventoryState) => ({
-        openWindows: state.openWindows.filter(id => id !== containerId)
+        openWindows: state.openWindows.filter(w => w.id !== containerId)
     })),
     setContainerData: (id: string, data: ContainerData) =>
         set((state: InventoryState) => ({
@@ -214,17 +217,12 @@ export const useInventoryStore = create<InventoryState>((set) => ({
 
     // Details
     detailsWindows: [],
-    openDetails: (item: Item) => set((state) => {
-        // Prevent duplicates based on name? Or allow same item twice?
-        // Usually unique by reference or name. Let's assume name unique for window purposes or just allow multiple.
-        // If we want to prevent multiple windows for the EXACT SAME item instance, we need unique ID.
-        // For now, let's just append. User can close them.
-        // Actually, preventing exact duplicates is better UX.
-        if (state.detailsWindows.some(i => i.name === item.name)) return state;
-        return { detailsWindows: [...state.detailsWindows, item] };
+    openDetails: (item: Item, position?: { x: number, y: number }) => set((state) => {
+        if (state.detailsWindows.some(i => i.item.name === item.name)) return state;
+        return { detailsWindows: [...state.detailsWindows, { item, position }] };
     }),
     closeDetails: (item: Item) => set((state) => ({
-        detailsWindows: state.detailsWindows.filter(i => i.name !== item.name)
+        detailsWindows: state.detailsWindows.filter(i => i.item.name !== item.name)
     })),
 
     // Give Item state
@@ -267,7 +265,7 @@ export const useInventoryStore = create<InventoryState>((set) => ({
         };
     }),
 
-    moveItem: (fromContainerId: string, toContainerId: string, itemName: string, targetSlot: { x: number; y: number }, rotated?: boolean) => {
+    moveItem: (fromContainerId: string, toContainerId: string, itemName: string, targetSlot: { x: number; y: number }, rotated?: boolean, folded?: boolean) => {
         set((state: InventoryState) => {
             const sourceContainer = state.containers[fromContainerId];
             const targetContainer = state.containers[toContainerId];
@@ -279,8 +277,16 @@ export const useInventoryStore = create<InventoryState>((set) => ({
 
             const item = sourceContainer.items[itemIndex];
             const isRotated = rotated !== undefined ? rotated : !!item.rotated;
+            const isFolded = folded !== undefined ? folded : !!item.folded;
 
-            const originalSize = item.size || { x: 1, y: 1 };
+            let originalSize = item.size || { x: 1, y: 1 };
+            if (folded !== undefined) {
+                const config = ITEM_CONFIGS[item.name];
+                if (config) {
+                    originalSize = isFolded ? config.foldedSize : config.expandedSize;
+                }
+            }
+
             const size = isRotated ? { x: originalSize.y, y: originalSize.x } : originalSize;
 
             // 1. Boundary Check
@@ -344,7 +350,7 @@ export const useInventoryStore = create<InventoryState>((set) => ({
                 newSourceItems.splice(itemIndex, 1);
             }
 
-            const updatedItem = { ...item, slot: targetSlot, rotated: isRotated };
+            const updatedItem = { ...item, slot: targetSlot, rotated: isRotated, folded: isFolded, size: originalSize };
 
             if (fromContainerId === toContainerId) {
                 newTargetItems[itemIndex] = updatedItem;

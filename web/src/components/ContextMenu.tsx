@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 interface ContextMenuProps {
     visible: boolean;
     position: { x: number; y: number };
-    options: { label: string; action: () => void; danger?: boolean }[];
+    options: { label: string; action: () => void; danger?: boolean; disabled?: boolean }[];
     onClose: () => void;
 }
 
@@ -39,11 +39,18 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({ visible, position, opt
             {options.map((option, index) => (
                 <button
                     key={index}
-                    className={`text-left px-3 py-1.5 text-xs hover:bg-surface-light transition-colors ${option.danger ? 'text-red-400 hover:text-red-300' : 'text-zinc-200 hover:text-white'
+                    disabled={option.disabled}
+                    className={`text-left px-3 py-1.5 text-xs transition-colors ${option.disabled
+                        ? 'text-zinc-600 cursor-not-allowed'
+                        : option.danger
+                            ? 'text-red-400 hover:text-red-300 hover:bg-surface-light'
+                            : 'text-zinc-200 hover:text-white hover:bg-surface-light'
                         }`}
                     onClick={() => {
-                        option.action();
-                        onClose();
+                        if (!option.disabled) {
+                            option.action();
+                            onClose();
+                        }
                     }}
                 >
                     {option.label}

@@ -166,7 +166,7 @@ function App() {
       if (action === 'close') {
         setOpen(false);
         setGiveTarget(null);
-        useInventoryStore.setState({ detailsWindows: [] });
+        useInventoryStore.setState({ detailsWindows: [], openWindows: [], activeContextMenuItemId: null });
       } else if (action === 'updateWeaponAmmo') {
         const { weaponSlot, totalAmmo, clipAmmo } = data;
         useInventoryStore.getState().updateWeaponAmmo(weaponSlot, totalAmmo, clipAmmo);
@@ -215,9 +215,7 @@ function App() {
 
       if (e.key.toLowerCase() === 'x') {
         const hovered = useInventoryStore.getState().hoveredItem;
-        console.log('X pressed. Hovered:', hovered);
-        if (hovered && hovered.item) {
-          console.log('Sending dropItem for:', hovered.item.name);
+        if (hovered && hovered.item && !activeId) {
           fetchNui('dropItem', {
             itemId: hovered.item.id,
             item: hovered.item.name,
@@ -226,39 +224,80 @@ function App() {
             containerId: hovered.containerId,
             slot: hovered.item.slot
           });
-          // Optimistically clear hovered state
           useInventoryStore.getState().setHoveredItem(null);
         }
       }
-      // Keyboard Listeners (Rotate R, Fold F)
+
+      if (e.key.toLowerCase() === 'f') {
+        // 1. If currently dragging -> Fold
+        if (activeId) {
+          const containerId = activeContainerId || activeDragData?.containerId;
+          if (!containerId) return;
+
+          // GUARD: Prevent folding if container has items
+          const itemToFold = activeDragData;
+          if (itemToFold && (itemToFold.type === 'backpack' || itemToFold.type === 'vest' || itemToFold.type === 'bag')) {
+            const targetContainer = useInventoryStore.getState().containers[activeId as string];
+            if (targetContainer && targetContainer.items && targetContainer.items.length > 0) {
+              useInventoryStore.getState().addNotification('Não é possível dobrar um container com itens dentro.', 'error');
+              return; // Block fold
+            }
+          }
+
+          setActiveDragFolded(prev => !prev);
+        }
+        // 2. If hovering and NOT dragging -> Quick Equip / Unequip
+        else {
+          const hovered = useInventoryStore.getState().hoveredItem;
+          if (hovered && hovered.item) {
+            const isEquipped = hovered.item.isEquipment || hovered.containerId.startsWith('equip-');
+
+            if (isEquipped) {
+              fetchNui('unequipItem', {
+                item: hovered.item.name,
+                id: hovered.item.id,
+                fromSlot: hovered.containerId.replace('equip-', ''),
+                to: 'player-inv',
+                slot: {}
+              });
+            } else {
+              let targetSlot = '';
+              const type = hovered.item.type;
+              if (type === 'helmet') targetSlot = 'head';
+              else if (type === 'mask') targetSlot = 'face';
+              else if (type === 'armor') targetSlot = 'armor';
+              else if (type === 'earpiece') targetSlot = 'earpiece';
+              else if (type === 'vest') targetSlot = 'vest';
+              else if (type === 'backpack') targetSlot = 'backpack';
+              else if (type === 'weapon_pistol') targetSlot = 'pistol';
+              else if (type === 'weapon_melee') targetSlot = 'melee';
+              else if (type?.startsWith('weapon_')) {
+                const eq = useInventoryStore.getState().equipment;
+                if (!eq.primary) targetSlot = 'primary';
+                else if (!eq.secondary) targetSlot = 'secondary';
+                else targetSlot = 'primary';
+              }
+
+              if (targetSlot) {
+                fetchNui('equipItem', {
+                  item: hovered.item.name,
+                  id: hovered.item.id,
+                  from: hovered.containerId,
+                  slot: targetSlot
+                });
+              }
+            }
+            useInventoryStore.getState().setHoveredItem(null);
+          }
+        }
+      }
+
+      // Keyboard Listeners (Rotate R)
       if (!activeId) return;
 
       if (e.key.toLowerCase() === 'r') {
         setActiveDragRotation(prev => !prev);
         // Only update visual state. Store is updated on Drop.
-      }
-
-      if (e.key.toLowerCase() === 'f') {
-        const containerId = activeContainerId || activeDragData?.containerId;
-        if (!containerId) return;
-
-        if (containerId.startsWith('equip-')) {
-          // When dragging FROM equipment, only toggle the visual fold state.
-          // The store item stays expanded (slot always shows expanded).
-          // finalFolded is read from activeDragFolded at drop time.
-          setActiveDragFolded(prev => !prev);
-        } else {
-          // Container item: update store + visual
-          toggleItemFold(containerId, activeId as string);
-          setActiveDragFolded(prev => !prev);
-
-          // Persist fold to server
-          fetchNui('foldItem', {
-            item: activeDragData?.name,
-            id: activeId,
-            container: containerId
-          });
-        }
       }
 
       // Check Shortcuts 5-8
@@ -419,7 +458,7 @@ function App() {
     if (!container) return { baseId, regionOffset: { x: 0, y: 0 } };
 
     // Resolve Layout
-    const layout = CONTAINER_LAYOUTS[container.id] || CONTAINER_LAYOUTS[container.label] || (container.type === 'vest' ? CONTAINER_LAYOUTS['vest'] : CONTAINER_LAYOUTS['backpack']);
+    const layout = (container.name ? CONTAINER_LAYOUTS[container.name] : null) || CONTAINER_LAYOUTS[container.label] || (container.type === 'vest' ? CONTAINER_LAYOUTS['vest'] : CONTAINER_LAYOUTS['backpack']);
 
     // Flatten pockets from rows to find the correct index
     const allPockets = layout.rows.flatMap((r: any) => r.pockets);
@@ -447,8 +486,8 @@ function App() {
     const relativeX = activeRect.left - containerRect.left - PADDING_X;
     const relativeY = activeRect.top - containerRect.top - PADDING_Y;
 
-    const slotX = Math.max(1, Math.round(relativeX / (SLOT_SIZE + GAP)) + 1);
-    const slotY = Math.max(1, Math.round(relativeY / (SLOT_SIZE + GAP)) + 1);
+    const slotX = Math.round(relativeX / (SLOT_SIZE + GAP)) + 1;
+    const slotY = Math.round(relativeY / (SLOT_SIZE + GAP)) + 1;
 
     return { x: slotX, y: slotY };
   }, []);
@@ -992,13 +1031,15 @@ function App() {
     }
 
     // Validate Placement BEFORE Moving
-    // When coming from equipment with finalFolded=true, validate against the folded size
+    // Always resolve the correct size based on the final intended fold state
     let itemForValidation = item;
-    if (fromContainerId.startsWith('equip-') && finalFolded) {
-      const cfg = ITEM_CONFIGS[(item as any).name];
-      if (cfg) {
-        itemForValidation = { ...item, size: cfg.foldedSize } as any;
-      }
+    const cfg = ITEM_CONFIGS[(item as any).name];
+    if (cfg) {
+      // Use the size matching the final fold state the user chose during the drag
+      itemForValidation = { ...item, size: finalFolded ? cfg.foldedSize : cfg.expandedSize } as any;
+    } else if (fromContainerId.startsWith('equip-') && finalFolded) {
+      // Fallback for items without explicit config: keep at folded size when coming from equip
+      // (legacy path, cfg should cover all foldable items)
     }
     const isValidPlacement = validatePlacement(toId, itemForValidation, { x: relSlotX, y: relSlotY }, finalRotation);
 
@@ -1027,7 +1068,7 @@ function App() {
       });
     } else {
       // Standard Move
-      moveItem(fromContainerId, baseId, itemId, { x: slotX, y: slotY }, finalRotation);
+      moveItem(fromContainerId, baseId, itemId, { x: slotX, y: slotY }, finalRotation, finalFolded);
 
       fetchNui('moveItem', {
         item: item.name,
@@ -1037,7 +1078,7 @@ function App() {
         slot: { x: slotX, y: slotY },
         fromSlot: item.slot,
         rotated: finalRotation,
-        folded: item.folded // Send folded state from store
+        folded: finalFolded // Send folded state from active drag visual
       });
     }
   };
@@ -1128,20 +1169,23 @@ function App() {
               )}
             </div>
             {/* Floating Container Windows */}
-            {openWindows.map(id => (
+            {openWindows.map(w => (
               <ContainerWindow
-                key={id}
-                containerId={id}
-                onClose={() => closeWindow(id)}
+                key={w.id}
+                containerId={w.id}
+                initialPosition={w.position}
+                onClose={() => closeWindow(w.id)}
+                dragHighlight={dragHighlight}
               />
             ))}
 
             {/* Item Details Window */}
-            {detailsWindows.map((item) => (
+            {detailsWindows.map((w) => (
               <ItemDetailsWindow
-                key={item.name}
-                item={item}
-                onClose={() => closeDetails(item)}
+                key={w.item.name}
+                item={w.item}
+                initialPosition={w.position}
+                onClose={() => closeDetails(w.item)}
               />
             ))}
 

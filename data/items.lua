@@ -242,33 +242,37 @@ Items = {
         }
     },
     ['rig_st_tipo_4'] = {
-        label = "ST Tipo 4",
-        weight = 1.2,
-        size = { x = 3, y = 3 },
-        type = "vest",
-        image = "vest_t4.png",
-        equipment = {
+        label        = "ST Tipo 4",
+        weight       = 1.2,
+        size         = { x = 3, y = 3 },
+        expandedSize = { x = 3, y = 3 },
+        foldedSize   = { x = 2, y = 2 },
+        type         = "vest",
+        image        = "vest_t4.png",
+        equipment    = {
             componentId = 9,
             drawableId = 20,
             textureId = 1
         },
-        container = {
+        container    = {
             size = { width = 4, height = 10 },
             maxWeight = 10.0
         }
     },
     ['mochila_tatica_expansivel_luc'] = {
-        label = "Mochila Tática Expansível Luc",
-        weight = 1.0,
-        size = { x = 4, y = 5 },
-        type = "backpack",
-        image = "backpack_luc.png",
-        equipment = {
+        label        = "Mochila Tática Expansível Luc",
+        weight       = 1.0,
+        size         = { x = 4, y = 5 },
+        expandedSize = { x = 4, y = 5 },
+        foldedSize   = { x = 2, y = 2 },
+        type         = "backpack",
+        image        = "backpack_luc.png",
+        equipment    = {
             componentId = 5,
             drawableId = 45,
             textureId = 0
         },
-        container = {
+        container    = {
             size = { width = 5, height = 10 },
             maxWeight = 20.0
         }

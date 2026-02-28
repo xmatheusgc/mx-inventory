@@ -16,7 +16,7 @@ export const PlayerInventory: React.FC<PlayerInventoryProps> = ({ dragHighlight 
     const { containers, equipment } = useInventoryStore();
 
     return (
-        <div className="flex flex-col gap-4 overflow-y-auto overflow-x-hidden pt-6 border bg-black/60 border-white/10 w-[500px] shrink-0">
+        <div className="flex flex-col gap-4 overflow-y-auto overflow-x-hidden pt-6 border bg-black/60 border-white/10 w-[520px] shrink-0">
             {/* 1. Pockets (Always Top) */}
             {containers['player-inv'] &&
                 <div className="flex flex-col gap-1 shrink-0 px-4">
@@ -42,9 +42,9 @@ export const PlayerInventory: React.FC<PlayerInventoryProps> = ({ dragHighlight 
                     {/* Container (Scrollable Area) */}
                     <div className="flex-1 overflow-x-auto custom-scrollbar-hide">
                         {Object.values(containers)
-                            .filter((c: any) => c.type === 'vest' && equipment?.vest?.name === c.id)
+                            .filter((c: any) => c.type === 'vest' && equipment?.vest?.id === c.id)
                             .map((c: any) => {
-                                const layout = CONTAINER_LAYOUTS[c.id] || CONTAINER_LAYOUTS[c.name] || CONTAINER_LAYOUTS['vest'];
+                                const layout = CONTAINER_LAYOUTS[c.name] || CONTAINER_LAYOUTS['vest'];
 
                                 if (layout) {
                                     return (
@@ -103,9 +103,9 @@ export const PlayerInventory: React.FC<PlayerInventoryProps> = ({ dragHighlight 
 
                         {/* Container (if exists) */}
                         {Object.values(containers)
-                            .filter((c: any) => c.type === 'backpack' && equipment?.backpack?.name === c.id)
+                            .filter((c: any) => c.type === 'backpack' && equipment?.backpack?.id === c.id)
                             .map((c: any) => {
-                                const layout = CONTAINER_LAYOUTS[c.id] || CONTAINER_LAYOUTS[c.name] || CONTAINER_LAYOUTS['backpack'];
+                                const layout = CONTAINER_LAYOUTS[c.name] || CONTAINER_LAYOUTS['backpack'];
 
                                 if (layout) {
                                     return (

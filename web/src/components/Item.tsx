@@ -64,9 +64,11 @@ export const ItemView: React.FC<ItemProps & {
     // This item's context menu is visible only when it holds the global active id
     const showContextMenu = activeContextMenuItemId === props.id;
 
-    // When equipped, only weapons (excluding melee) show a context menu.
-    // In the grid (isEquipment=false) all items always have the menu.
-    const contextMenuAllowed = !props.isEquipment || (!!type?.startsWith('weapon_') && type !== 'weapon_melee');
+    const isContainer = (type === 'vest' || type === 'backpack' || type === 'bag');
+    const isEquipmentItem = type === 'helmet' || type === 'armor' || type === 'mask' || type === 'glasses' || type === 'ear' || type === 'earpiece' || type === 'watch' || type === 'bracelet';
+    const contextMenuAllowed = !props.isEquipment ||
+        (!!type?.startsWith('weapon_') && type !== 'weapon_melee') ||
+        isContainer || isEquipmentItem;
 
     const [showTooltip, setShowTooltip] = useState(false);
     const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
@@ -84,7 +86,8 @@ export const ItemView: React.FC<ItemProps & {
             // Reconstruct item object for shortcuts
             const itemData: any = {
                 id: props.id, name, count, label, image, type, slot,
-                description, weight, size, rotated, metadata: props.metadata
+                description, weight, size, rotated, metadata: props.metadata,
+                isEquipment: props.isEquipment
             };
             useInventoryStore.getState().setHoveredItem({ item: itemData, containerId: props.containerId || 'unknown' });
         }
@@ -125,14 +128,15 @@ export const ItemView: React.FC<ItemProps & {
         if ((type === 'vest' || type === 'backpack' || type === 'bag') && !props.isEquipment) {
             // Prevent opening if folded
             if (props.folded) return;
-            toggleWindow(name);
+            toggleWindow(props.id, { x: e.clientX, y: e.clientY });
         } else {
             // Other Items -> Open Details
             const itemData: any = { // Reconstruct item object for details
-                id: props.id, name, count, label, image, type, slot,
-                description, weight, size, rotated, metadata: props.metadata
+                id: props.id, name, count, label, image, type, slot: props.slot,
+                description, weight, size, rotated, metadata: props.metadata,
+                isEquipment: props.isEquipment
             };
-            openDetails(itemData);
+            openDetails(itemData, { x: e.clientX, y: e.clientY });
         }
     };
 
@@ -179,10 +183,51 @@ export const ItemView: React.FC<ItemProps & {
                 fetchNui('foldItem', payload);
                 break;
             case 'open':
-                toggleWindow(name); // Use name as containerId
+                toggleWindow(props.id, contextMenuPos);
                 break;
             case 'details':
-                console.log('Details:', payload);
+                const itemData: any = {
+                    id: props.id, name, count, label, image, type, slot: props.slot,
+                    description, weight, size, rotated, metadata: props.metadata,
+                    isEquipment: props.isEquipment
+                };
+                openDetails(itemData, contextMenuPos);
+                break;
+            case 'equip': {
+                let targetSlot = '';
+                if (type === 'helmet') targetSlot = 'head';
+                else if (type === 'mask') targetSlot = 'face';
+                else if (type === 'armor') targetSlot = 'armor';
+                else if (type === 'earpiece') targetSlot = 'earpiece';
+                else if (type === 'vest') targetSlot = 'vest';
+                else if (type === 'backpack') targetSlot = 'backpack';
+                else if (type === 'weapon_pistol') targetSlot = 'pistol';
+                else if (type === 'weapon_melee') targetSlot = 'melee';
+                else if (type?.startsWith('weapon_')) {
+                    const eq = useInventoryStore.getState().equipment;
+                    if (!eq.primary) targetSlot = 'primary';
+                    else if (!eq.secondary) targetSlot = 'secondary';
+                    else targetSlot = 'primary';
+                }
+
+                if (targetSlot) {
+                    fetchNui('equipItem', {
+                        item: name,
+                        id: props.id,
+                        from: containerId,
+                        slot: targetSlot
+                    });
+                }
+                break;
+            }
+            case 'unequip':
+                fetchNui('unequipItem', {
+                    item: name,
+                    id: props.id,
+                    fromSlot: (containerId || '').replace('equip-', ''),
+                    to: 'player-inv',
+                    slot: {}
+                });
                 break;
         }
         setActiveContextMenuItemId(null);
@@ -206,7 +251,8 @@ export const ItemView: React.FC<ItemProps & {
         setActiveContextMenuItemId(null);
         const itemData: any = {
             id: props.id, name, count, label, image, type, slot,
-            description, weight, size, rotated, metadata: props.metadata
+            description, weight, size, rotated, metadata: props.metadata,
+            isEquipment: props.isEquipment
         };
         setGiveTarget({ item: itemData, containerId: containerId || 'player-inv' });
     };
@@ -215,32 +261,102 @@ export const ItemView: React.FC<ItemProps & {
     // --- Context Options Construction ---
     const contextOptions = [];
 
-    // [All Items]
-    contextOptions.push({ label: 'Dar Item', action: () => handleGiveItem() });
-    if (count > 1) {
-        contextOptions.push({ label: 'Dividir', action: () => initiateQuantityAction('split') });
+    // Helper to determine item categorization
+    const isBagRigs = type === 'vest' || type === 'backpack' || type === 'bag';
+    const isWeapon = type?.startsWith('weapon_') && type !== 'weapon_melee';
+    const isConsumable = !type || type === 'generic' || type === 'consumable' || type === 'food' || type === 'drink';
+
+    // 1. Mochila/Rig
+    if (isBagRigs) {
+        if (props.isEquipment) {
+            contextOptions.push({ label: 'Ver Detalhes', action: () => handleAction('details') });
+            contextOptions.push({ label: 'Remover', action: () => handleAction('unequip') });
+            contextOptions.push({ label: 'Descartar', danger: true, action: () => initiateQuantityAction('drop') }); // Danger block handling if implemented in ContextMenu
+        } else {
+            contextOptions.push({ label: 'Ver Detalhes', action: () => handleAction('details') });
+            contextOptions.push({ label: 'Abrir', action: () => handleAction('open') });
+            // TODO: Equip logic needs to check if slot is free. For now, assuming server handles validation or we add client state check later.
+            contextOptions.push({ label: 'Equipar', action: () => handleAction('equip') });
+            const bagHasItems = (useInventoryStore.getState().containers[props.id]?.items?.length ?? 0) > 0;
+
+            // Check if there is space to unfold into
+            const canUnfold = () => {
+                const targetContainer = useInventoryStore.getState().containers[containerId || ''];
+                if (!targetContainer) return false;
+
+                const w = rotated ? (size?.y || 1) : (size?.x || 1);
+                const h = rotated ? (size?.x || 1) : (size?.y || 1);
+
+                if (slot.x + w - 1 > targetContainer.size.width || slot.y + h - 1 > targetContainer.size.height) return false;
+
+                if (targetContainer.validSlots) {
+                    for (let px = 0; px < w; px++) {
+                        for (let py = 0; py < h; py++) {
+                            const checkX = slot.x + px;
+                            const checkY = slot.y + py;
+                            if (!targetContainer.validSlots.some(vs => vs.x === checkX && vs.y === checkY)) return false;
+                        }
+                    }
+                }
+
+                return !targetContainer.items.some(other => {
+                    if (other.id === props.id) return false;
+                    const oW = other.folded ? 1 : (other.rotated ? (other.size?.y || 1) : (other.size?.x || 1));
+                    const oH = other.folded ? 1 : (other.rotated ? (other.size?.x || 1) : (other.size?.y || 1));
+                    return slot.x < other.slot.x + oW && slot.x + w > other.slot.x && slot.y < other.slot.y + oH && slot.y + h > other.slot.y;
+                });
+            };
+
+            contextOptions.push({
+                label: props.folded ? 'Desenrolar' : 'Enrolar',
+                action: () => handleAction('fold'),
+                disabled: props.folded ? !canUnfold() : bagHasItems
+            });
+            contextOptions.push({ label: 'Descartar', danger: true, action: () => initiateQuantityAction('drop') });
+        }
     }
-    contextOptions.push({ label: 'Dropar', action: () => initiateQuantityAction('drop') }); // Supports qty
-    contextOptions.push({ label: 'Detalhes', action: () => handleAction('details') });
-
-    // [Consumable] (generic for now, or specific type check)
-    if (!type || type === 'generic' || type === 'consumable' || type === 'food' || type === 'drink') {
-        contextOptions.unshift({ label: 'Usar', action: () => handleAction('use') });
+    // 2. Equipamentos (Colete, Capacete, etc...)
+    else if (isEquipmentItem) {
+        if (props.isEquipment) {
+            contextOptions.push({ label: 'Ver Detalhes', action: () => handleAction('details') });
+            contextOptions.push({ label: 'Remover', action: () => handleAction('unequip') });
+            contextOptions.push({ label: 'Descartar', danger: true, action: () => initiateQuantityAction('drop') });
+        } else {
+            contextOptions.push({ label: 'Ver Detalhes', action: () => handleAction('details') });
+            contextOptions.push({ label: 'Equipar', action: () => handleAction('equip') });
+            contextOptions.push({ label: 'Descartar', danger: true, action: () => initiateQuantityAction('drop') });
+        }
     }
-
-    // [Weapon / Magazine]
-    if (type?.startsWith('weapon_') || type === 'magazine' || type === 'ammo_box') {
-        contextOptions.push({ label: 'Descarregar', action: () => handleAction('unload') });
+    // 3. Armas
+    else if (isWeapon) {
+        if (props.isEquipment) {
+            contextOptions.push({ label: 'Ver Detalhes', action: () => handleAction('details') });
+            contextOptions.push({ label: 'Descarregar', action: () => handleAction('unload') });
+            contextOptions.push({ label: 'Remover', action: () => handleAction('unequip') });
+            contextOptions.push({ label: 'Descartar', danger: true, action: () => initiateQuantityAction('drop') });
+        } else {
+            contextOptions.push({ label: 'Ver Detalhes', action: () => handleAction('details') });
+            contextOptions.push({ label: 'Descarregar', action: () => handleAction('unload') });
+            contextOptions.push({ label: 'Equipar', action: () => handleAction('equip') });
+            contextOptions.push({ label: 'Descartar', danger: true, action: () => initiateQuantityAction('drop') });
+        }
     }
-
-    // [Bags/Vests] (Foldable / Openable)
-    if (type === 'vest' || type === 'backpack' || type === 'bag') {
-        contextOptions.push({ label: 'Abrir', action: () => handleAction('open') });
-        contextOptions.push({ label: 'Dobrar', action: () => handleAction('fold') });
+    // 4. Consumiveis
+    else if (isConsumable) {
+        contextOptions.push({ label: 'Ver Detalhes', action: () => handleAction('details') });
+        contextOptions.push({ label: 'Usar', action: () => handleAction('use') });
+        contextOptions.push({ label: 'Descartar', danger: true, action: () => initiateQuantityAction('drop') });
     }
-
-    // Eject magazine option is removed for traditional ammo.
-
+    // Fallback for items not matching the explicit categories above (e.g. materials, generic items)
+    else {
+        contextOptions.push({ label: 'Ver Detalhes', action: () => handleAction('details') });
+        contextOptions.push({ label: 'Usar', action: () => handleAction('use') });
+        if (count > 1) {
+            contextOptions.push({ label: 'Dividir', action: () => initiateQuantityAction('split') });
+        }
+        contextOptions.push({ label: 'Dar Item', action: () => handleGiveItem() });
+        contextOptions.push({ label: 'Descartar', danger: true, action: () => initiateQuantityAction('drop') });
+    }
 
     return (
         <>
