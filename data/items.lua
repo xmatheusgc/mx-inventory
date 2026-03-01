@@ -289,9 +289,9 @@ Items = {
         type         = "vest",
         image        = "vest_t4.png",
         equipment    = {
-            componentId = 9,
-            drawableId = 20,
-            textureId = 1
+            componentId = 7,
+            drawableId = 148,
+            textureId = 14
         },
         container    = {
             size = { width = 4, height = 10 },

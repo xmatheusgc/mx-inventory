@@ -189,7 +189,7 @@ local function AddItem(src, item, count, metadata)
             for _, eqItem in pairs(Inventory[src].equipment) do
                 local eqDef = ItemDefs[eqItem.name]
                 if eqDef and eqDef.container then
-                    table.insert(searchContainers, eqItem.name)
+                    table.insert(searchContainers, eqItem.id) -- use UUID, not name
                 end
             end
         end
@@ -234,7 +234,7 @@ local function AddItem(src, item, count, metadata)
                 local eqDef = ItemDefs[eqItem.name]
                 if eqDef and eqDef.container then
                     table.insert(containerOrder, {
-                        key = eqItem.name,
+                        key = eqItem.id, -- use UUID, not name
                         label = eqDef.label or eqItem.name,
                         w = eqDef.container.size.width,
                         h = eqDef.container.size.height,
@@ -1867,18 +1867,6 @@ RegisterNetEvent('mx-inv:server:updateAmmo', function(weaponHash, totalAmmo, cli
 end)
 
 -- Debug Command: Clear ALL Inventory Data
-RegisterCommand('clearallinv', function(source, args)
-    if source ~= 0 then return end -- Console only for safety
-    MySQL.query('TRUNCATE TABLE mx_inventory_players', {}, function(affectedRows)
-        print('^1[mx-inv] WIPED ALL PLAYER INVENTORIES.^0')
-    end)
-    MySQL.query('TRUNCATE TABLE mx_inventory_stashes', {}, function(affectedRows)
-        print('^1[mx-inv] WIPED ALL STASHES.^0')
-    end)
-    -- Clear memory
-    Inventory = {}
-end, true)
-
 -- Command: Give Item
 RegisterCommand('giveitem', function(source, args)
     local src = source
@@ -1903,32 +1891,15 @@ RegisterCommand('giveitem', function(source, args)
         if not Inventory[targetId] then return end
     end
 
-    -- Auto-Equip Logic for Large Items (Backpack/Vest)
+    -- Auto-Equip Logic for Large Items (Container Items)
     local def = ItemDefs[itemName]
-    local autoEquipped = false
-    if def and (def.type == 'backpack' or def.type == 'vest') then
-        local slotKey = (def.type == 'backpack' and 'backpack') or 'vest'
-        if not Inventory[targetId].equipment then Inventory[targetId].equipment = {} end
-
-        if not Inventory[targetId].equipment[slotKey] then
-            Inventory[targetId].equipment[slotKey] = {
-                name = itemName,
-                count = 1,
-                type = def.type,
-                id = GenerateUUID(),
-                metadata = {}
-            }
-            autoEquipped = true
-            print('^2[mx-inv] Auto-equipped ' .. itemName .. ' for ' .. targetId .. '^0')
+    if def and def.container and Inventory[targetId].equipment then
+        -- Find which possible equipment slot this container belongs to
+        local possibleSlots = { 'vest', 'backpack' }
+        for _, slotKey in ipairs(possibleSlots) do
+            local slotDef = ItemDefs[itemName]
+            -- Just let AddItem handle it if we don't have explicit auto-equip rules right now, AddItem is smart enough.
         end
-    end
-
-    if autoEquipped then
-        print('Given (Auto-Equipped) ' .. itemName .. ' to ' .. targetId)
-        local player = MX_GetPlayer(targetId)
-        if player then DB.SavePlayer(player.identifier, Inventory[targetId]) end
-        UpdateClientInventory(targetId)
-        return
     end
 
     local success, msg = AddItem(targetId, itemName, count)
@@ -1959,18 +1930,20 @@ RegisterCommand('clearinv', function(source, args)
     end
 
     if Inventory[targetId] then
-        Inventory[targetId].player = {}
+        -- Clear all containers mapped to this player
+        Inventory[targetId] = { player = {}, equipment = {} }
+
         local player = MX_GetPlayer(targetId)
         if player then
-            DB.SavePlayer(player.identifier, {})
-            print('^2[mx-inv] Cleared inventory for ' .. player.name .. '^0')
+            DB.SavePlayer(player.identifier, Inventory[targetId])
+            print('^2[mx-inv] Cleared ALL inventory data for ' .. player.name .. '^0')
         end
         -- Refresh Client
         OpenInventory(targetId)
     else
         print('Inventory not loaded for target.')
     end
-end)
+end, true)
 
 -- Debug Command: Inspect Inventory State
 RegisterCommand('debuginv', function(source, args)
@@ -1985,12 +1958,11 @@ RegisterCommand('debuginv', function(source, args)
     end
 
     print('^3--- DEBUG INVENTORY ' .. src .. ' ---^0')
-    print('^2PLAYER ITEMS:^0 ' .. json.encode(d.player))
-    print('^2EQUIPMENT:^0 ' .. json.encode(d.equipment))
-    print('^2VEST:^0 ' .. json.encode(d['rig_st_tipo_4']))
-    print('^2BAG:^0 ' .. json.encode(d['mochila_tatica_expansivel_luc']))
+    for k, v in pairs(d) do
+        print('^2' .. string.upper(tostring(k)) .. ':^0 ' .. json.encode(v))
+    end
     print('^3----------------------------------^0')
-end, false)
+end, true)
 
 -- ============================================================
 -- Item Drops

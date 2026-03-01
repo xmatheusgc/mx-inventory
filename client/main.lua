@@ -933,20 +933,37 @@ Citizen.CreateThread(function()
             if dist < 20.0 and not localProps[id] then
                 -- Spawn local prop
                 local model = GetHashKey(drop.prop)
-                RequestModel(model)
-                while not HasModelLoaded(model) do Wait(0) end
 
-                local prop = CreateObject(model, drop.coords.x, drop.coords.y, drop.coords.z, false, false, false)
-                SetEntityCollision(prop, false, false)
-                PlaceObjectOnGroundProperly(prop)
-
-                -- Rotate weapons to lie flat
-                if drop.type and (string.match(drop.type, 'weapon_') or drop.type == 'weapon') and drop.type ~= 'weapon_melee' then
-                    SetEntityRotation(prop, 90.0, 0.0, GetEntityHeading(prop), 2, true)
+                -- Check if model is valid before requesting
+                if not IsModelInCdimage(model) or not IsModelValid(model) then
+                    model = GetHashKey('v_ret_gc_box1')
                 end
 
-                FreezeEntityPosition(prop, true)
-                localProps[id] = prop
+                RequestModel(model)
+                local timeout = GetGameTimer() + 2000
+                while not HasModelLoaded(model) and GetGameTimer() < timeout do Wait(0) end
+
+                -- Fallback if the model timed out and didn't load
+                if not HasModelLoaded(model) then
+                    model = GetHashKey('v_ret_gc_box1')
+                    RequestModel(model)
+                    while not HasModelLoaded(model) do Wait(0) end
+                end
+
+                local prop = CreateObject(model, drop.coords.x, drop.coords.y, drop.coords.z, false, false, false)
+
+                if prop and prop ~= 0 then
+                    SetEntityCollision(prop, false, false)
+                    PlaceObjectOnGroundProperly(prop)
+
+                    -- Rotate weapons to lie flat
+                    if drop.type and (string.match(drop.type, 'weapon_') or drop.type == 'weapon') and drop.type ~= 'weapon_melee' then
+                        SetEntityRotation(prop, 90.0, 0.0, GetEntityHeading(prop), 2, true)
+                    end
+
+                    FreezeEntityPosition(prop, true)
+                    localProps[id] = prop
+                end
             elseif dist > 20.0 and localProps[id] then
                 -- Despawn
                 DeleteObject(localProps[id])
