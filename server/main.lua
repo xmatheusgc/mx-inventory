@@ -18,6 +18,8 @@ Citizen.CreateThread(function()
 end)
 
 local Inventory = {}
+local ActiveStashes = {}
+local PlayerOpenStash = {}
 math.randomseed(os.time())
 
 
@@ -157,6 +159,27 @@ local function GetFormattedInventory(src)
 
     local keys = ""
     for k, _ in pairs(payload) do keys = keys .. k .. ", " end
+
+    -- IMPORTANT: Inject Open Stash if the player has one Active
+    -- This prevents the stash from disappearing on moveItem/UpdateClientInventory
+    if PlayerOpenStash then
+        local stashId = PlayerOpenStash[src]
+        if stashId and ActiveStashes and ActiveStashes[stashId] then
+            local stash = ActiveStashes[stashId]
+            -- Double check we haven't already added it (shouldn't be, since it's filtered from saves)
+            payload[stashId] = {
+                id = stashId,
+                type = 'container',
+                label = stash.label,
+                size = stash.size,
+                items = stash.items,
+                weight = GetContainerWeight(stash.items),
+                maxWeight = 999.0
+            }
+            keys = keys .. stashId .. "(STASH), "
+        end
+    end
+
     print('^3[mx-inv] Payload generated with keys: ' .. keys .. '^0')
 
     return payload
@@ -1116,6 +1139,9 @@ RegisterNetEvent('mx-inv:server:moveItem', function(data)
 
     -- Refresh Client
     UpdateClientInventory(src)
+
+    -- Auto-save stash if one is open after move
+    SaveActiveStashForPlayer(src)
 end)
 
 -- Swap Equipment Event (Equip-to-Equip)
@@ -2507,4 +2533,190 @@ Citizen.CreateThread(function()
             print('^3[mx-inv] Cleanup: Removed ' .. itemsRemoved .. ' expired drops.^0')
         end
     end
+end)
+
+-- ============================================================
+-- STASH SYSTEM (External API for other resources)
+-- ============================================================
+
+-- Active stashes in memory: { [stashId] = { items = {}, size = {}, label = '' } }
+-- (Moved to top of file)
+
+-- Tracks which stash each player has open: { [src] = stashId }
+-- (Moved to top of file)
+
+--- Register a stash with pre-generated items (does NOT open it)
+--- @param stashId string  Unique stash identifier (must start with 'stash_')
+--- @param label string    Display label in UI
+--- @param size table      Grid size { width, height }
+--- @param items table     Array of item objects { name, count, slot, id }
+--- @return boolean
+local function RegisterStash(stashId, label, size, items)
+    if not stashId or not label or not size then
+        print('^1[mx-inv] RegisterStash: Invalid parameters^0')
+        return false
+    end
+
+    ActiveStashes[stashId] = {
+        items = items or {},
+        size = size,
+        label = label
+    }
+
+    print('^2[mx-inv] Registered stash: ' .. stashId .. ' (' .. #(items or {}) .. ' items)^0')
+    return true
+end
+
+--- Open a stash for a player (sends combined inventory + stash payload)
+--- @param src number      Player source
+--- @param stashId string  Stash identifier
+--- @param label string    Display label (used if stash doesn't exist yet)
+--- @param size table      Grid size { width, height } (used if stash doesn't exist yet)
+local function OpenStashForPlayer(src, stashId, label, size)
+    if not src or not stashId then return end
+
+    -- Ensure player inventory is loaded
+    if not Inventory[src] then
+        print('^1[mx-inv] OpenStash: Inventory not loaded for ' .. src .. '^0')
+        return
+    end
+
+    -- Create stash if it doesn't exist
+    if not ActiveStashes[stashId] then
+        -- Try loading from DB
+        local dbItems = DB.LoadStash(stashId)
+        ActiveStashes[stashId] = {
+            items = dbItems or {},
+            size = size or { width = 4, height = 3 },
+            label = label or 'Stash'
+        }
+    end
+
+    local stash = ActiveStashes[stashId]
+
+    -- Bind stash to player inventory map so moveItem resolver works
+    Inventory[src][stashId] = stash.items
+
+    -- Track which stash is open
+    PlayerOpenStash[src] = stashId
+
+    -- Build payload with player inventory + stash
+    local payload = GetFormattedInventory(src)
+    if not payload then return end
+
+    -- Add the stash container to payload
+    payload[stashId] = {
+        id = stashId,
+        type = 'container',
+        label = stash.label,
+        size = stash.size,
+        items = stash.items,
+        weight = GetContainerWeight(stash.items),
+        maxWeight = 999.0 -- Stashes have no weight limit
+    }
+
+    TriggerClientEvent('mx-inv:client:openInventory', src, payload)
+    print('^2[mx-inv] Opened stash ' .. stashId .. ' for player ' .. src .. '^0')
+end
+
+--- Close stash for a player (unbind from inventory, save to DB)
+--- @param src number  Player source
+local function CloseStashForPlayer(src)
+    local stashId = PlayerOpenStash[src]
+    if not stashId then return end
+
+    -- Save stash to DB
+    local stash = ActiveStashes[stashId]
+    if stash then
+        DB.SaveStash(stashId, stash.items)
+    end
+
+    -- Unbind from player inventory
+    if Inventory[src] then
+        Inventory[src][stashId] = nil
+    end
+
+    PlayerOpenStash[src] = nil
+    print('^3[mx-inv] Closed stash ' .. stashId .. ' for player ' .. src .. '^0')
+end
+
+--- Delete a stash entirely (cleanup)
+--- @param stashId string  Stash identifier
+--- @return boolean
+local function DeleteStashById(stashId)
+    if not stashId then return false end
+
+    -- Unbind from any player who has it open
+    for src, openId in pairs(PlayerOpenStash) do
+        if openId == stashId then
+            if Inventory[src] then
+                Inventory[src][stashId] = nil
+            end
+            PlayerOpenStash[src] = nil
+        end
+    end
+
+    ActiveStashes[stashId] = nil
+
+    -- Delete from DB
+    Citizen.CreateThread(function()
+        MySQL.prepare.await('DELETE FROM mx_inventory_stashes WHERE name = ?', { stashId })
+    end)
+
+    print('^3[mx-inv] Deleted stash: ' .. stashId .. '^0')
+    return true
+end
+
+-- Export the stash API for external resources
+exports('RegisterStash', RegisterStash)
+exports('OpenStash', OpenStashForPlayer)
+exports('CloseStash', CloseStashForPlayer)
+exports('DeleteStash', DeleteStashById)
+
+-- Close stash when player closes inventory
+RegisterNetEvent('mx-inv:server:closeInventory', function()
+    local src = source
+    CloseStashForPlayer(src)
+end)
+
+-- Save stash when items are moved to/from it
+-- Hook into the existing save flow: after any moveItem, check if a stash is involved
+local _origPlayerDropped = nil
+
+-- Ensure stash is saved and cleaned up on player disconnect
+AddEventHandler('playerDropped', function()
+    local src = source
+    CloseStashForPlayer(src)
+end)
+
+-- Filter stash keys from player save data
+-- Override DB.SavePlayer to strip transient stash data
+local _originalSavePlayer = DB.SavePlayer
+DB.SavePlayer = function(identifier, inventoryData)
+    -- Create filtered copy without stash keys
+    local filtered = {}
+    for k, v in pairs(inventoryData) do
+        if type(k) ~= 'string' or (string.sub(k, 1, 6) ~= 'stash_' and string.sub(k, 1, 6) ~= 'stash-') then
+            filtered[k] = v
+        end
+    end
+    return _originalSavePlayer(identifier, filtered)
+end
+
+-- Auto-save stash when moveItem involves a stash container
+-- We hook this by checking after each moveItem if a stash is open
+local function SaveActiveStashForPlayer(src)
+    local stashId = PlayerOpenStash[src]
+    if not stashId or not ActiveStashes[stashId] then return end
+
+    Citizen.CreateThread(function()
+        DB.SaveStash(stashId, ActiveStashes[stashId].items)
+    end)
+end
+
+-- Patch: After moveItem updates client, also save stash if open
+-- This is done by registering a net event that the client fires on inventory close
+RegisterNetEvent('mx-inv:server:onMoveComplete', function()
+    local src = source
+    SaveActiveStashForPlayer(src)
 end)

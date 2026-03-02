@@ -25,6 +25,13 @@ server_scripts {
 
 ui_page 'web/dist/index.html'
 
+server_exports {
+    'RegisterStash',
+    'OpenStash',
+    'CloseStash',
+    'DeleteStash'
+}
+
 files {
     'web/dist/index.html',
     'web/dist/assets/*'

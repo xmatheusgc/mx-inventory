@@ -127,12 +127,25 @@ RegisterNetEvent('mx-inv:client:openInventory', function(data)
 
     SetupPed(hasStash and 0 or 1)
 
-    -- Disable Idle Camera
+    -- Capture position when opening (for distance checks)
+    local openPos = GetEntityCoords(PlayerPedId())
+
+    -- Disable Idle Camera and handle distance auto-close
     Citizen.CreateThread(function()
         while isInventoryOpen do
+            -- Idle Cam
             InvalidateIdleCam()
             InvalidateVehicleIdleCam()
-            Wait(1000) -- Check every second is usually enough for idle cam reset
+
+            -- Auto-close if moved too far from a stash/drop
+            if hasStash then
+                local currentPos = GetEntityCoords(PlayerPedId())
+                if #(currentPos - openPos) > 2.0 then
+                    CloseInventory()
+                end
+            end
+
+            Wait(500) -- Check every 500ms
         end
     end)
 end)
@@ -152,6 +165,9 @@ function CloseInventory()
         action = 'close'
     })
     CleanUpPed()
+    -- Notify server to save/unbind any open stash
+    TriggerServerEvent('mx-inv:server:closeInventory')
+    TriggerEvent('mx-inv:client:closed')
 end
 
 RegisterNUICallback('close', function(_, cb)
