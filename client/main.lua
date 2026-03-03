@@ -1,5 +1,8 @@
 local isInventoryOpen = false
 local lastAmmoCache = {}
+local currentClone = nil
+
+-- Modules are loaded globally via fxmanifest.lua
 
 -- Helper: Play Animation
 local function PlayInventoryAnim(type)
@@ -100,10 +103,7 @@ RegisterNUICallback('movePedToSide', function(data, cb)
     cb('ok')
 end)
 
-RegisterNUICallback('useItem', function(data, cb)
-    TriggerServerEvent('mx-inv:server:useItem', data)
-    cb('ok')
-end)
+
 
 RegisterNetEvent('mx-inv:client:openInventory', function(data)
     if isInventoryOpen then return end
@@ -170,22 +170,6 @@ function CloseInventory()
     TriggerEvent('mx-inv:client:closed')
 end
 
-RegisterNUICallback('close', function(_, cb)
-    CloseInventory()
-    cb('ok')
-end)
-
-RegisterNUICallback('moveItem', function(data, cb)
-    -- data: { item, from, to, slot: {x,y} }
-    TriggerServerEvent('mx-inv:server:moveItem', data)
-    cb('ok')
-end)
-
-RegisterNUICallback('foldItem', function(data, cb)
-    TriggerServerEvent('mx-inv:server:foldItem', data)
-    cb('ok')
-end)
-
 RegisterCommand('openstash', function()
     if isInventoryOpen then
         CloseInventory()
@@ -194,42 +178,7 @@ RegisterCommand('openstash', function()
     TriggerServerEvent('mx-inv:server:openStash')
 end, false)
 
--- Play Animation (Consume)
-RegisterNetEvent('mx-inv:client:playAnim', function(data)
-    local ped = PlayerPedId()
-    local animDict = data.animDict
-    local animName = data.anim
-    local propModel = data.prop
-    local duration = 5000 -- Fixed duration for now
 
-    if not animDict or not animName then return end
-
-    RequestAnimDict(animDict)
-    while not HasAnimDictLoaded(animDict) do Wait(10) end
-
-    local propObj = nil
-    if propModel then
-        local hash = GetHashKey(propModel)
-        RequestModel(hash)
-        while not HasModelLoaded(hash) do Wait(10) end
-
-        local coords = GetEntityCoords(ped)
-        propObj = CreateObject(hash, coords.x, coords.y, coords.z + 0.2, true, true, true)
-        local boneIndex = GetPedBoneIndex(ped, 18905) -- Left Hand usually, or 60309 Right Hand
-        -- Adjust logic based on animation. Most eating anims use Right Hand (60309) or Left (18905)
-        AttachEntityToEntity(propObj, ped, boneIndex, 0.12, 0.028, 0.001, 10.0, 175.0, 0.0, true, true, false, true, 1,
-            true)
-    end
-
-    TaskPlayAnim(ped, animDict, animName, 8.0, -8.0, duration, 49, 0, false, false, false)
-
-    Wait(duration)
-
-    StopAnimTask(ped, animDict, animName, 1.0)
-    if propObj then
-        DeleteObject(propObj)
-    end
-end)
 
 -- Weapon Wheel Disable & Shortcuts
 Citizen.CreateThread(function()
@@ -375,169 +324,9 @@ RegisterNetEvent('mx-inv:client:playVisorAnim', function(visorDown)
     print(string.format('[mx-inv] playVisorAnim received: visorDown=%s', tostring(visorDown)))
 end)
 
--- Update Equipment Visuals
-RegisterNetEvent('mx-inv:client:updateEquipment', function(itemName, isEquipping, ammoToLoad, attachments)
-    print('[mx-inv] Debug Equip: Updating ' ..
-        tostring(itemName) .. ' | Equipping: ' .. tostring(isEquipping) .. ' | Ammo: ' .. tostring(ammoToLoad))
 
-    local ped = PlayerPedId()
-    local def = Items[itemName]
-    if not def then
-        print('[mx-inv] Debug Equip: Item definition not found for ' .. tostring(itemName))
-        return
-    end
-    if not def.equipment then
-        print('[mx-inv] Debug Equip: Item has no equipment data.')
-        return
-    end
 
-    local eq = def.equipment
 
-    -- Weapon Logic
-    if eq.weaponHash then
-        local hash = GetHashKey(eq.weaponHash)
-        print('[mx-inv] Debug Equip: Weapon Hash: ' .. hash)
-        if isEquipping then
-            GiveWeaponToPed(ped, hash, 0, false, false)
-            SetPedAmmo(ped, hash, ammoToLoad or 0)
-
-            -- Apply Attachments
-            if attachments then
-                for slot, attachName in pairs(attachments) do
-                    if attachName then
-                        local attachDef = Items[attachName]
-                        if attachDef and attachDef.attachment and attachDef.attachment.componentHash then
-                            local compHash = GetHashKey(attachDef.attachment.componentHash)
-                            if compHash ~= 0 then
-                                GiveWeaponComponentToPed(ped, hash, compHash)
-                                print('[mx-inv] Applied attachment: ' .. attachDef.attachment.componentHash)
-                            end
-                        end
-                    end
-                end
-            end
-        else
-            RemoveWeaponFromPed(ped, hash)
-        end
-    end
-
-    -- Clothing / Prop Logic (Vest/Bag/Helmet/etc.)
-    if eq.propId ~= nil and eq.drawableId then
-        -- GTA V prop (hat/helmet/glasses): use SetPedPropIndex
-        if isEquipping then
-            SetPedPropIndex(ped, eq.propId, eq.drawableId, eq.textureId or 0, true)
-            print(string.format('[mx-inv] Applied prop: slot=%d drawable=%d texture=%d', eq.propId, eq.drawableId,
-                eq.textureId or 0))
-        else
-            ClearPedProp(ped, eq.propId)
-            print('[mx-inv] Cleared prop slot ' .. eq.propId)
-        end
-    elseif eq.componentId and eq.drawableId then
-        -- GTA V clothing component: use SetPedComponentVariation
-        if isEquipping then
-            SetPedComponentVariation(ped, eq.componentId, eq.drawableId, eq.textureId or 0, 2)
-        else
-            SetPedComponentVariation(ped, eq.componentId, 0, 0, 2)
-        end
-    end
-end)
-
--- Set Active Weapon (Hotbar)
-RegisterNetEvent('mx-inv:client:setActiveWeapon', function(weaponHash)
-    local ped = PlayerPedId()
-    if weaponHash then
-        local hash = (type(weaponHash) == 'string') and GetHashKey(weaponHash) or weaponHash
-        local currentWeapon = GetSelectedPedWeapon(ped)
-
-        if currentWeapon == hash then
-            SetCurrentPedWeapon(ped, GetHashKey("WEAPON_UNARMED"), true)
-        else
-            SetCurrentPedWeapon(ped, hash, true)
-        end
-    else
-        SetCurrentPedWeapon(ped, GetHashKey("WEAPON_UNARMED"), true)
-    end
-end)
-
--- Handle Equipping Item (From NUI)
-RegisterNUICallback('equipItem', function(data, cb)
-    print('[mx-inv] Debug Client: Requesting Equip Item: ' ..
-        data.item .. ' (ID: ' .. tostring(data.id) .. ') to slot: ' .. data.slot)
-    TriggerServerEvent('mx-inv:server:moveItem', {
-        item = data.item,
-        id = data.id,
-        from = data.from,
-        to = 'equip-' .. data.slot,
-        slot = {} -- Not needed for equip
-    })
-    cb('ok')
-end)
-
--- Handle Unequipping Item (From NUI)
-RegisterNUICallback('unequipItem', function(data, cb)
-    print('[mx-inv] Debug Client: Requesting Unequip Item: ' ..
-        data.item .. ' (ID: ' .. tostring(data.id) .. ') from slot: ' .. data.fromSlot)
-    TriggerServerEvent('mx-inv:server:moveItem', {
-        item = data.item,
-        id = data.id,
-        from = 'equip-' .. data.fromSlot,
-        to = data.to,
-        slot = data.slot,    -- Target slot in inventory
-        folded = data.folded -- Forward fold state so server persists it correctly
-    })
-    cb('ok')
-end)
-
--- Handle Swap Equipment (From NUI)
-RegisterNUICallback('swapEquipment', function(data, cb)
-    print('[mx-inv] Debug Client: Requesting Swap Equipment: ' ..
-        data.item .. ' from ' .. data.fromSlot .. ' to ' .. data.toSlot)
-    TriggerServerEvent('mx-inv:server:swapEquipment', {
-        item = data.item,
-        fromSlot = data.fromSlot,
-        toSlot = data.toSlot
-    })
-    cb('ok')
-end)
-
--- Handle Load Ammo into Weapon (From NUI)
-RegisterNUICallback('loadAmmoIntoWeapon', function(data, cb)
-    print('[mx-inv] Debug Client: Loading Ammo into Weapon: ' ..
-        tostring(data.ammoItem.name) .. ' into ' .. tostring(data.weaponSlot))
-    TriggerServerEvent('mx-inv:server:loadAmmoIntoWeapon', {
-        id = data.id,
-        ammoItem = data.ammoItem,
-        weaponSlot = data.weaponSlot,
-        weaponContainer = data.weaponContainer,
-        ammoContainer = data.ammoContainer
-    })
-    cb('ok')
-end)
-
--- Handle Stack Items (Merge stackable items)
-RegisterNUICallback('stackItems', function(data, cb)
-    print('[mx-inv] Debug Client: Stacking items ' .. tostring(data.fromItemId) .. ' -> ' .. tostring(data.toItemId))
-    TriggerServerEvent('mx-inv:server:stackItems', {
-        fromItemId = data.fromItemId,
-        fromContainerId = data.fromContainerId,
-        toItemId = data.toItemId,
-        toContainerId = data.toContainerId
-    })
-    cb('ok')
-end)
-
--- Handle Unload Weapon (From NUI Context Menu)
-RegisterNUICallback('unloadItem', function(data, cb)
-    print('[mx-inv] Debug Client: Requesting Unload Item: ' ..
-        tostring(data.name) .. ' (ID: ' .. tostring(data.id) .. ') from container ' .. tostring(data.containerId))
-    TriggerServerEvent('mx-inv:server:unloadWeapon', {
-        id = data.id,
-        name = data.name,
-        containerId = data.containerId,
-        slot = data.slot
-    })
-    cb('ok')
-end)
 
 -- Generic Notification
 RegisterNetEvent('mx-inv:client:notify', function(msg, type, duration)
@@ -559,73 +348,9 @@ RegisterNetEvent('mx-inv:client:notify', function(msg, type, duration)
     })
 end)
 
--- Handle Attach Item to Weapon (From NUI Drag-and-Drop)
-RegisterNUICallback('attachToWeapon', function(data, cb)
-    print('[mx-inv] Debug Client: Attaching ' ..
-        tostring(data.attachmentItem) ..
-        ' to weapon ' .. tostring(data.weaponId) .. ' slot ' .. tostring(data.attachmentSlot))
-    TriggerServerEvent('mx-inv:server:attachToWeapon', {
-        weaponId = data.weaponId,
-        weaponContainerId = data.weaponContainerId,
-        attachmentSlot = data.attachmentSlot,
-        attachmentItem = data.attachmentItem,
-        attachmentItemId = data.attachmentItemId,
-        fromContainerId = data.fromContainerId
-    })
-    cb('ok')
-end)
 
--- Handle Remove Attachment from Weapon (From NUI Context Menu)
-RegisterNUICallback('removeAttachment', function(data, cb)
-    print('[mx-inv] Debug Client: Removing attachment from slot ' ..
-        tostring(data.attachmentSlot) .. ' on weapon ' .. tostring(data.weaponId))
-    TriggerServerEvent('mx-inv:server:removeAttachment', {
-        weaponId = data.weaponId,
-        weaponContainerId = data.weaponContainerId,
-        attachmentSlot = data.attachmentSlot,
-        attachmentItem = data.attachmentItem,
-        toContainerId = data.toContainerId,
-        toSlot = data.toSlot
-    })
-    cb('ok')
-end)
 
--- Sync attachments on equipped weapon (add/remove GTA components)
-RegisterNetEvent('mx-inv:client:syncAttachments', function(weaponHashName, attachments)
-    local ped = PlayerPedId()
-    local hash = GetHashKey(weaponHashName)
-    if not HasPedGotWeapon(ped, hash, false) then return end
 
-    -- Apply each attachment component
-    if attachments then
-        for slot, attachName in pairs(attachments) do
-            if attachName then
-                local attachDef = Items[attachName]
-                if attachDef and attachDef.attachment and attachDef.attachment.componentHash then
-                    local compHash = GetHashKey(attachDef.attachment.componentHash)
-                    if compHash ~= 0 then
-                        GiveWeaponComponentToPed(ped, hash, compHash)
-                        print('[mx-inv] Applied component: ' ..
-                            attachDef.attachment.componentHash .. ' to ' .. weaponHashName)
-                    end
-                end
-            end
-        end
-    end
-end)
-
--- Remove a specific attachment component from weapon
-RegisterNetEvent('mx-inv:client:removeAttachmentComponent', function(weaponHashName, componentHashName)
-    local ped = PlayerPedId()
-    local hash = GetHashKey(weaponHashName)
-    if not HasPedGotWeapon(ped, hash, false) then return end
-
-    local compHash = GetHashKey(componentHashName)
-    if compHash ~= 0 then
-        RemoveWeaponComponentFromPed(ped, hash, compHash)
-        print('[mx-inv] Removed component: ' .. componentHashName .. ' from ' .. weaponHashName)
-    end
-end)
 
 -- ============================================================
 -- HELMET ACCESSORY CLIENT HANDLERS

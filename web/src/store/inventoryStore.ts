@@ -127,6 +127,10 @@ interface InventoryState {
     notifications: { id: string; message: string; type: 'error' | 'success' | 'info'; duration?: number }[];
     addNotification: (message: string, type: 'error' | 'success' | 'info', duration?: number) => void;
     removeNotification: (id: string) => void;
+
+    // Item Definitions
+    itemDefs: Record<string, any>;
+    setItemDefs: (defs: Record<string, any>) => void;
 }
 
 // No helpers needed currently
@@ -259,6 +263,10 @@ export const useInventoryStore = create<InventoryState>((set) => ({
     removeNotification: (id) => set((state) => ({
         notifications: state.notifications.filter(n => n.id !== id)
     })),
+
+    // Item Definitions
+    itemDefs: {},
+    setItemDefs: (defs: Record<string, any>) => set({ itemDefs: defs }),
 
     setEquipment: (data: Record<string, Item | null>) => set({ equipment: data }),
 
@@ -458,19 +466,14 @@ export const useInventoryStore = create<InventoryState>((set) => ({
         };
     }),
 
-    swapEquipment: (fromSlot: string, toSlot: string) => set((state: InventoryState) => {
-        const fromItem = state.equipment[fromSlot];
-        if (!fromItem) return state;
-
-        const toItem = state.equipment[toSlot]; // Can be null (simple move) or Item (swap)
-
-        return {
-            equipment: {
-                ...state.equipment,
-                [fromSlot]: toItem,  // Put target's item (or null) into source slot
-                [toSlot]: fromItem   // Put source's item into target slot
-            }
-        };
+    swapEquipment: (from: string, slot: string) => set((state: InventoryState) => {
+        const fromSlot = from.replace('equip-', '');
+        const toSlot = slot.replace('equip-', '');
+        const newEquipment = { ...state.equipment };
+        const temp = newEquipment[fromSlot];
+        newEquipment[fromSlot] = newEquipment[toSlot];
+        newEquipment[toSlot] = temp;
+        return { equipment: newEquipment };
     }),
 
     loadAmmoIntoWeapon: (weaponIdOrSlot: string, weaponContainerId: string, ammoItem: Item, ammoContainerId: string) => set((state: InventoryState) => {

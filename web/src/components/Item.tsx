@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { twMerge } from 'tailwind-merge';
-import { useDraggable } from '@dnd-kit/core';
+import { useDraggable, useDroppable } from '@dnd-kit/core';
 import { Tooltip } from './Tooltip';
 import { ContextMenu } from './ContextMenu';
 import { QuantityModal } from './QuantityModal';
@@ -434,13 +434,23 @@ export const Item: React.FC<ItemProps & { containerId?: string }> = React.memo((
         data: { ...props, containerId },
     });
 
+    // Each item is ALSO a droppable zone for attachments/ammo/stacking
+    const { setNodeRef: setDropRef } = useDroppable({
+        id: `item-drop-${id}`,
+        data: {
+            type: 'item',
+            item: props,
+            containerId
+        }
+    });
+
     const currentSize = (rotated) ? { x: size?.y || 1, y: size?.x || 1 } : (size || { x: 1, y: 1 });
 
     const style = isEquipment ? {
         // Equipment Item Style: Centered, relative to slot, FULL FILL
         width: '100%',
         height: '100%',
-        position: 'absolute' as const, // Change to absolute to ensure it fills the relative parent
+        position: 'absolute' as const,
         top: 0,
         left: 0,
         zIndex: isDragging ? 100 : undefined,
@@ -457,12 +467,18 @@ export const Item: React.FC<ItemProps & { containerId?: string }> = React.memo((
         zIndex: isDragging ? 100 : undefined,
     };
 
+    // Use a combined ref for both draggable and droppable
+    const setCombinedRef = (el: HTMLElement | null) => {
+        setNodeRef(el);
+        setDropRef(el);
+    };
+
     return (
         <ItemView
             {...props}
             containerId={containerId}
             isDragging={isDragging}
-            innerRef={setNodeRef}
+            innerRef={setCombinedRef}
             listeners={listeners}
             attributes={attributes}
             style={style}

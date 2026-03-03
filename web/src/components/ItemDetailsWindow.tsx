@@ -242,8 +242,8 @@ export const ItemDetailsWindow: React.FC<ItemDetailsWindowProps> = ({ item, init
     const [isDragging, setIsDragging] = useState(false);
     const dragOffset = useRef({ x: 0, y: 0 });
 
-    // Get itemDefs directly from window (always available after first inventory open)
-    const defs = (window as any).__itemDefs || {};
+    const { itemDefs } = useInventoryStore();
+    const defs = itemDefs || {};
 
     useEffect(() => {
         const handleMouseMove = (e: MouseEvent) => {

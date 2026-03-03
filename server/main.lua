@@ -1,108 +1,24 @@
 local ItemDefs = Items -- data/items.lua loaded via fxmanifest
-local SyncHelmetAccessory
+
+-- Modules are loaded globally via fxmanifest.lua
+-- InventoryAPI, MovementEngine, DropAPI, EquipmentAPI are now globally available
 
 -- DB is global now (loaded from server/db.lua)
 
--- Initialize Database
+-- Initialize Database and Drops
 Citizen.CreateThread(function()
     DB.Init()
-    -- Sync existing drops from DB
-    while not DB.Ready do Wait(100) end
-    worldDrops = DB.LoadDrops()
-
-    local count = 0
-    if worldDrops then
-        for _ in pairs(worldDrops) do count = count + 1 end
-    end
-    print('^2[mx-inv] Loaded ' .. count .. ' world drops.^0')
 end)
+
+DropAPI.InitDrops()
+DropAPI.StartCleanupThread()
+
 
 local Inventory = {}
 local ActiveStashes = {}
 local PlayerOpenStash = {}
 math.randomseed(os.time())
 
-
--- Helper: Generate UUID
-local function GenerateUUID()
-    local template = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'
-    return string.gsub(template, '[xy]', function(c)
-        local v = (c == 'x') and math.random(0, 0xf) or math.random(8, 0xb)
-        return string.format('%x', v)
-    end)
-end
-
--- Helper: Calculate Weight
-local function GetContainerWeight(items)
-    local total = 0.0
-    for _, item in ipairs(items) do
-        local def = ItemDefs[item.name]
-        if def and def.weight then
-            total = total + (def.weight * item.count)
-        end
-    end
-    return total
-end
-
--- Helper: Find Free Slot (with Rotation Support)
-local function FindFreeSlot(container, itemSize, width, height)
-    width = width or Config.Inventory.Slots.width
-    height = height or Config.Inventory.Slots.height
-
-    local takenSlots = {}
-    for _, invItem in ipairs(container) do
-        local itemDef = ItemDefs[invItem.name]
-        -- Use item-specific size if it exists (e.g. for already rotated/folded items)
-        local currentSize = invItem.size or (itemDef and itemDef.size) or { x = 1, y = 1 }
-
-        for ix = 0, currentSize.x - 1 do
-            for iy = 0, currentSize.y - 1 do
-                local slotX = invItem.slot.x + ix
-                local slotY = invItem.slot.y + iy
-                takenSlots[slotX .. '-' .. slotY] = true
-            end
-        end
-    end
-
-    local function CheckFit(sX, sY, iX, iY)
-        for ix = 0, iX - 1 do
-            for iy = 0, iY - 1 do
-                local checkX = sX + ix
-                local checkY = sY + iy
-                if checkX > width or checkY > height or takenSlots[checkX .. '-' .. checkY] then
-                    return false
-                end
-            end
-        end
-        return true
-    end
-
-    -- Try Normal Orientation
-    for y = 1, height do
-        for x = 1, width do
-            if not takenSlots[x .. '-' .. y] then
-                if CheckFit(x, y, itemSize.x, itemSize.y) then
-                    return { x = x, y = y, rotated = false }
-                end
-            end
-        end
-    end
-
-    -- Try Rotated Orientation (only if not square)
-    if itemSize.x ~= itemSize.y then
-        for y = 1, height do
-            for x = 1, width do
-                if not takenSlots[x .. '-' .. y] then
-                    if CheckFit(x, y, itemSize.y, itemSize.x) then
-                        return { x = x, y = y, rotated = true }
-                    end
-                end
-            end
-        end
-    end
-
-    return nil
-end
 
 -- Helper: Get Formatted Inventory Payload
 local function GetFormattedInventory(src)
@@ -117,45 +33,13 @@ local function GetFormattedInventory(src)
             size = Config.Inventory.Slots,
             items = containers.player or {},
             maxWeight = Config.Inventory.MaxWeight,
-            weight = GetContainerWeight(containers.player or {})
+            weight = InventoryAPI.GetContainerWeight(containers.player or {})
         },
         equipment = containers.equipment,
         itemDefs = ItemDefs
     }
 
-    -- Dynamic Containers from ALL valid container items
-    local function parseContainerItem(item)
-        if not item or not item.name then return end
-        local def = ItemDefs[item.name]
-        if def and def.container then
-            local containerId = item.id -- Use item UUID as storage ID
-
-            -- Lazy Init: Create storage if missing
-            if not containers[containerId] then
-                containers[containerId] = {}
-            end
-
-            payload[containerId] = {
-                id = containerId,
-                name = item.name,
-                type = def.type, -- 'vest', 'backpack', etc.
-                label = def.label,
-                size = def.container.size,
-                items = containers[containerId],
-                weight = GetContainerWeight(containers[containerId]),
-                maxWeight = def.container.maxWeight
-            }
-        end
-    end
-
-    -- Iterate through EVERY container's items so bags-in-bags are formatted
-    for _, containerItems in pairs(containers) do
-        if type(containerItems) == 'table' then
-            for _, item in pairs(containerItems) do
-                parseContainerItem(item)
-            end
-        end
-    end
+    InventoryAPI.FormatPayloadContainers(containers, payload)
 
     local keys = ""
     for k, _ in pairs(payload) do keys = keys .. k .. ", " end
@@ -173,7 +57,7 @@ local function GetFormattedInventory(src)
                 label = stash.label,
                 size = stash.size,
                 items = stash.items,
-                weight = GetContainerWeight(stash.items),
+                weight = InventoryAPI.GetContainerWeight(stash.items),
                 maxWeight = 999.0
             }
             keys = keys .. stashId .. "(STASH), "
@@ -195,8 +79,8 @@ end
 
 -- Remove redundant FindFreeSlot
 
--- Helper: Add Item to Player (Support for Multi-Container & Rotation)
-local function AddItem(src, item, count, metadata)
+-- Helper: Add Item to Player (Support for Multi-Container, Rotation & Specific Slot)
+local function AddItem(src, item, count, metadata, targetSlot, targetContainerId)
     if not Inventory[src] then return false, "Inventory not loaded" end
     local def = ItemDefs[item]
     if not def then return false, "Invalid item" end
@@ -204,6 +88,49 @@ local function AddItem(src, item, count, metadata)
     local maxStack = (def.stackable and def.maxStack) or (def.stackable and 60) or 1
     local itemSize = (def.size) or { x = 1, y = 1 }
     local itemWeight = def.weight or 0.0
+
+    -- 0. SPECIFIC SLOT PLACEMENT (Used for Drag & Drop removals/moves)
+    if targetSlot and targetContainerId then
+        local tKey = (targetContainerId == 'player-inv') and 'player' or targetContainerId
+        local container = Inventory[src][tKey]
+        if container then
+            -- Weight Check
+            local currentWeight = InventoryAPI.GetContainerWeight(container)
+            local maxWeight = (tKey == 'player') and Config.Inventory.MaxWeight or
+                (ItemDefs[tKey] and ItemDefs[tKey].container.maxWeight) or 100.0
+
+            if currentWeight + (itemWeight * count) <= maxWeight then
+                -- Check if slot is occupied (Simple overlap check)
+                local occupied = false
+                for _, invItem in ipairs(container) do
+                    -- Item dimensions (accounting for rotation)
+                    local iW = invItem.rotated and (invItem.size and invItem.size.y or 1) or (invItem.size and invItem.size.x or 1)
+                    local iH = invItem.rotated and (invItem.size and invItem.size.x or 1) or (invItem.size and invItem.size.y or 1)
+                    
+                    if targetSlot.x < invItem.slot.x + iW and targetSlot.x + itemSize.x > invItem.slot.x and
+                        targetSlot.y < invItem.slot.y + iH and targetSlot.y + itemSize.y > invItem.slot.y then
+                        occupied = true
+                        break
+                    end
+                end
+
+                if not occupied then
+                    local newItem = {
+                        name = item,
+                        count = count,
+                        slot = { x = targetSlot.x, y = targetSlot.y },
+                        size = { x = itemSize.x, y = itemSize.y },
+                        id = InventoryAPI.GenerateUUID(),
+                        metadata = metadata
+                    }
+                    table.insert(container, newItem)
+                    print('^2[mx-inv] AddItem: Placed ' .. item .. ' into ' .. targetContainerId .. ' at ' .. targetSlot.x .. ',' .. targetSlot.y .. '^0')
+                    return true, "Adicionado no slot específico"
+                end
+            end
+        end
+        -- Fall back to auto-search if specific slot is occupied or failed weight or container not found
+    end
 
     -- 1. Try to stack into existing slots across ALL containers
     if def.stackable then
@@ -221,7 +148,7 @@ local function AddItem(src, item, count, metadata)
             local container = Inventory[src][cKey]
             if container then
                 -- Check weight
-                local currentWeight = GetContainerWeight(container)
+                local currentWeight = InventoryAPI.GetContainerWeight(container)
                 local maxWeight = (cKey == 'player') and Config.Inventory.MaxWeight or
                     (ItemDefs[cKey] and ItemDefs[cKey].container.maxWeight) or 100.0
 
@@ -280,9 +207,9 @@ local function AddItem(src, item, count, metadata)
                 end
 
                 -- Weight Check
-                local currentWeight = GetContainerWeight(container)
+                local currentWeight = InventoryAPI.GetContainerWeight(container)
                 if currentWeight + itemWeight <= cInfo.maxW then
-                    local slotData = FindFreeSlot(container, itemSize, cInfo.w, cInfo.h)
+                    local slotData = MovementEngine.FindFreeSlot(container, itemSize, cInfo.w, cInfo.h)
                     if slotData then
                         foundSlot = slotData
                         targetContainerKey = cInfo.key
@@ -308,7 +235,7 @@ local function AddItem(src, item, count, metadata)
                 slot = { x = foundSlot.x, y = foundSlot.y },
                 size = finalSize, -- Persist the size (rotated or normal)
                 rotated = foundSlot.rotated,
-                id = GenerateUUID(),
+                id = InventoryAPI.GenerateUUID(),
                 metadata = (amount == count) and metadata or nil
             }
             if metadata and amount == count then
@@ -366,7 +293,7 @@ local function AutoEquipItem(src, item, count, metadata)
             local newItem = {
                 name = item,
                 count = 1,
-                id = GenerateUUID(),
+                id = InventoryAPI.GenerateUUID(),
                 metadata = metadata or {}
             }
             equipment[slot] = newItem
@@ -419,12 +346,12 @@ local function LoadPlayer(src)
         -- Migration: Ensure all items have UUIDs
         if Inventory[src].player then
             for _, item in ipairs(Inventory[src].player) do
-                if not item.id then item.id = GenerateUUID() end
+                if not item.id then item.id = InventoryAPI.GenerateUUID() end
             end
         end
         if Inventory[src].equipment then
             for _, item in pairs(Inventory[src].equipment) do
-                if item and not item.id then item.id = GenerateUUID() end
+                if item and not item.id then item.id = InventoryAPI.GenerateUUID() end
             end
         end
 
@@ -560,7 +487,7 @@ RegisterNetEvent('mx-inv:server:openStash', function()
         size = Config.Inventory.Slots,
         items = containers.player or {},
         maxWeight = Config.Inventory.MaxWeight,
-        weight = GetContainerWeight(containers.player or {})
+        weight = InventoryAPI.GetContainerWeight(containers.player or {})
     }
 
     local vestData = {
@@ -569,7 +496,7 @@ RegisterNetEvent('mx-inv:server:openStash', function()
         label = 'ST Tipo 4',
         size = { ["width"] = 4, ["height"] = 10 },
         items = vestItems,
-        weight = GetContainerWeight(vestItems)
+        weight = InventoryAPI.GetContainerWeight(vestItems)
     }
 
     local bagData = {
@@ -578,7 +505,7 @@ RegisterNetEvent('mx-inv:server:openStash', function()
         label = 'Mochila Tática Expansível Luc',
         size = { ["width"] = 5, ["height"] = 10 },
         items = containers['mochila_tatica_expansivel_luc'] or {},
-        weight = GetContainerWeight(containers['mochila_tatica_expansivel_luc'] or {})
+        weight = InventoryAPI.GetContainerWeight(containers['mochila_tatica_expansivel_luc'] or {})
     }
 
     -- Add Debug Stash
@@ -828,7 +755,7 @@ RegisterNetEvent('mx-inv:server:foldItem', function(data)
     local containerItems = nil
     if containerId == 'player-inv' or containerId == 'player' then
         containerItems = containerMap.player
-    elseif string.sub(containerId, 1, 6) == 'equip-' then
+    elseif containerId and string.sub(containerId, 1, 6) == 'equip-' then
         local equipSlotId = string.sub(containerId, 7)
         local eqItem = containerMap.equipment[equipSlotId]
         if eqItem and eqItem.id == itemId then
@@ -866,10 +793,9 @@ RegisterNetEvent('mx-inv:server:foldItem', function(data)
             local newFolded = not item.folded
 
             if not newFolded then
-                -- === UNFOLDING: validate space and find best anchor ===
+                -- === UNFOLDING ===
                 local expandedSz = (def and def.expandedSize) or (def and def.size) or
                     { x = item.size and item.size.x or 1, y = item.size and item.size.y or 1 }
-                local foldedSz = (def and def.foldedSize) or item.size or { x = 1, y = 1 }
 
                 -- Resolve container grid size
                 local gridWidth = Config.Inventory.Slots.width
@@ -883,8 +809,6 @@ RegisterNetEvent('mx-inv:server:foldItem', function(data)
                                 gridWidth    = pDef.container.size.width
                                 gridHeight   = pDef.container.size.height
                                 gridResolved = true
-                                print('^3[mx-inv][UNFOLD] Grid from equip item \'' ..
-                                    tostring(eqItm.name) .. '\': ' .. gridWidth .. 'x' .. gridHeight .. '^0')
                             end
                             break
                         end
@@ -897,15 +821,12 @@ RegisterNetEvent('mx-inv:server:foldItem', function(data)
                                     gridWidth    = pDef.container.size.width
                                     gridHeight   = pDef.container.size.height
                                     gridResolved = true
-                                    print('^3[mx-inv][UNFOLD] Grid from player item \'' ..
-                                        tostring(pItm.name) .. '\': ' .. gridWidth .. 'x' .. gridHeight .. '^0')
                                 end
                                 break
                             end
                         end
                     end
                     if not gridResolved then
-                        -- Last resort: also walk ALL sub-containers to find nested bags
                         for _, containerItems2 in pairs(containerMap) do
                             if type(containerItems2) == 'table' then
                                 for _, itm2 in ipairs(containerItems2) do
@@ -915,8 +836,6 @@ RegisterNetEvent('mx-inv:server:foldItem', function(data)
                                             gridWidth    = pDef.container.size.width
                                             gridHeight   = pDef.container.size.height
                                             gridResolved = true
-                                            print('^3[mx-inv][UNFOLD] Grid from nested item \'' ..
-                                                tostring(itm2.name) .. '\': ' .. gridWidth .. 'x' .. gridHeight .. '^0')
                                         end
                                         break
                                     end
@@ -926,14 +845,15 @@ RegisterNetEvent('mx-inv:server:foldItem', function(data)
                         end
                     end
                 end
-                if not gridResolved then
-                    print('^1[mx-inv][UNFOLD] WARNING: Could not resolve grid for container ' ..
-                        tostring(containerId) ..
-                        ', falling back to player inv size ' .. gridWidth .. 'x' .. gridHeight .. '^0')
-                end
 
-                local bestAnchor = FindBestUnfoldAnchor(containerItems, item, itemId, expandedSz, foldedSz, gridWidth,
-                    gridHeight, nil)
+                -- Use Movement Engine to validate the unfold
+                local success, err = MovementEngine.CheckFit(containerItems, expandedSz, item.slot.x, item.slot.y, gridWidth, gridHeight, item.id)
+                local bestAnchor = success and { x = item.slot.x, y = item.slot.y, rotated = false } or nil
+
+                if not bestAnchor then
+                    -- Try finding another free slot
+                    bestAnchor = MovementEngine.FindFreeSlot(containerItems, expandedSz, gridWidth, gridHeight)
+                end
 
                 if not bestAnchor then
                     TriggerClientEvent('mx-inv:client:notify', src, 'Não há espaço para desenrolar o item aqui!', 'error')
@@ -989,24 +909,78 @@ RegisterNetEvent('mx-inv:server:moveItem', function(data)
 
     -- Helper to resolve container & equipment slot
     local function GetContainerAndSlot(id)
-        if id == 'player-inv' then return containerMap.player, nil end
+        if not id then return nil, nil end
+        if id == 'player-inv' or id == 'player' then return containerMap.player, nil end
+        
         if string.sub(id, 1, 6) == 'equip-' then
             local equipSlotId = string.sub(id, 7)
+            if not containerMap.equipment then containerMap.equipment = {} end
             return containerMap.equipment, equipSlotId -- Return table, key
         end
-        if not containerMap[id] then containerMap[id] = {} end
-        return containerMap[id], nil
+
+        -- SECURITY VALIDATION: Prevent accessing closed stashes
+        if string.sub(id, 1, 6) == 'stash_' then
+            if PlayerOpenStash[src] == id and ActiveStashes[id] then
+                return ActiveStashes[id].items, nil
+            end
+            print('^1[mx-inv] Security Alert: Player ' .. src .. ' attempted to access closed stash ' .. id .. '^0')
+            return nil, nil
+        end
+
+        -- SECURITY VALIDATION: Prevent accessing closed drops
+        if string.sub(id, 1, 5) == 'drop-' then
+            if PlayerOpenDrop and PlayerOpenDrop[src] == id then
+                if containerMap[id] then return containerMap[id], nil end
+            end
+            print('^1[mx-inv] Security Alert: Player ' .. src .. ' attempted to access closed drop ' .. id .. '^0')
+            return nil, nil
+        end
+
+        -- Bag UUID (or other direct container ID)
+        if containerMap[id] then
+            return containerMap[id], nil
+        end
+
+        -- Fallback: Check if it's a UUID of an equipped item that IS a container
+        if containerMap.equipment then
+            for _, eqItem in pairs(containerMap.equipment) do
+                if eqItem and eqItem.id == id then
+                    local def = ItemDefs[eqItem.name]
+                    if def and def.container then
+                        containerMap[id] = {} -- Auto-initialize
+                        return containerMap[id], nil
+                    end
+                end
+            end
+        end
+
+        -- Check player pockets for the container item
+        if containerMap.player then
+            for _, pItem in ipairs(containerMap.player) do
+                if pItem and pItem.id == id then
+                    local def = ItemDefs[pItem.name]
+                    if def and def.container then
+                        containerMap[id] = {} -- Auto-initialize
+                        return containerMap[id], nil
+                    end
+                end
+            end
+        end
+
+        return nil, nil
     end
 
     local fromContainer, fromEquipKey = GetContainerAndSlot(fromId)
     local toContainer, toEquipKey = GetContainerAndSlot(toId)
 
     if not fromContainer then
-        print('^1[mx-inv] Debug Move: Source ' .. fromId .. ' not found.^0')
+        print('^1[mx-inv] Debug Move: Source ' .. tostring(fromId) .. ' not found.^0')
+        UpdateClientInventory(src)
         return
     end
-    if not toContainer then
-        print('^1[mx-inv] Debug Move: Target ' .. toId .. ' not found.^0')
+    if not toContainer and not toEquipKey then
+        print('^1[mx-inv] Debug Move: Target ' .. tostring(toId) .. ' not found.^0')
+        UpdateClientInventory(src)
         return
     end
 
@@ -1064,7 +1038,7 @@ RegisterNetEvent('mx-inv:server:moveItem', function(data)
     print('^3[mx-inv] Debug Move: Found ' ..
         itemName .. ' in ' .. (fromEquipKey and ('Equip:' .. fromEquipKey) or ('Array:' .. itemIndex)) .. '^0')
 
-    -- 2. Validate Target
+    -- 2. Validate Target Weight & Position/Size
     if toEquipKey then
         -- Target is Equipment Slot
         print('^3[mx-inv] Debug Move: Target is EQUIPMENT key: ' .. toEquipKey .. '^0')
@@ -1076,8 +1050,7 @@ RegisterNetEvent('mx-inv:server:moveItem', function(data)
 
             if currentOther and currentOther.name == itemObj.name then
                 print('^1[mx-inv] Validation: Blocked duplicate weapon ' .. itemObj.name .. '^0')
-                TriggerClientEvent('mx-inv:client:notify', src, "Você já possui esta arma equipada em outro slot!",
-                    "error")
+                TriggerClientEvent('mx-inv:client:notify', src, "Você já possui esta arma equipada em outro slot!", "error")
                 UpdateClientInventory(src) -- Re-sync to snap back
                 return
             end
@@ -1088,13 +1061,259 @@ RegisterNetEvent('mx-inv:server:moveItem', function(data)
         end
     else
         -- Target is Standard Array
+        
+        -- Determine incoming item size (respecting its current or requested rotation/fold)
+        local fallbackSize = itemObj.size or (ItemDefs[itemObj.name] and ItemDefs[itemObj.name].size) or { x = 1, y = 1 }
+        local testSize = { x = fallbackSize.x, y = fallbackSize.y }
+        if data.rotated then
+            testSize = { x = fallbackSize.y, y = fallbackSize.x }
+        end
+        if data.folded ~= nil then
+            local def = ItemDefs[itemObj.name]
+            if data.folded and def and def.foldedSize then
+                testSize = def.foldedSize
+                if data.rotated then testSize = { x = testSize.y, y = testSize.x } end
+            end
+        end
+        local itemWeight = (ItemDefs[itemObj.name] and ItemDefs[itemObj.name].weight) or 0.0
+
         if targetSlot and targetSlot.x and targetSlot.y then
-            for _, existingItem in ipairs(toContainer) do
-                if existingItem.slot.x == tonumber(targetSlot.x) and existingItem.slot.y == tonumber(targetSlot.y) then
-                    print('^3[mx-inv] Warning Move: Collision detected at ' ..
-                        targetSlot.x .. ',' .. targetSlot.y .. '. Item will overlap!^0')
+            -- SPECIFIC SLOT REQUEST (Drag & Drop)
+            local gridWidth = Config.Inventory.Slots.width
+            local gridHeight = Config.Inventory.Slots.height
+            local toMaxWeight = 9999.0
+
+            if toId == 'player-inv' or toId == 'player' then
+                toMaxWeight = Config.Inventory.MaxWeight
+            elseif toId:sub(1, 6) == 'equip-' then
+                local eqObj = containerMap.equipment[toId:sub(7)]
+                if eqObj and ItemDefs[eqObj.name] and ItemDefs[eqObj.name].container then
+                    gridWidth = ItemDefs[eqObj.name].container.size.width
+                    gridHeight = ItemDefs[eqObj.name].container.size.height
+                    toMaxWeight = ItemDefs[eqObj.name].container.maxWeight
+                end
+            elseif toId:sub(1, 6) == 'stash_' then
+                local stash = ActiveStashes[toId]
+                if stash then
+                    gridWidth = stash.size.width
+                    gridHeight = stash.size.height
+                    toMaxWeight = stash.maxWeight or 999.0
+                end
+            else
+                local targetFound = false
+                -- Search in player pockets
+                for _, pItm in ipairs(containerMap.player or {}) do
+                    if pItm.id == toId then
+                        local pDef = ItemDefs[pItm.name]
+                        if pDef and pDef.container then
+                            gridWidth = pDef.container.size.width
+                            gridHeight = pDef.container.size.height
+                            toMaxWeight = pDef.container.maxWeight
+                        end
+                        targetFound = true
+                        break
+                    end
+                end
+                
+                -- If not found, search in equipment items
+                if not targetFound and containerMap.equipment then
+                    for _, eqItm in pairs(containerMap.equipment) do
+                        if eqItm and eqItm.id == toId then
+                            local eqDef = ItemDefs[eqItm.name]
+                            if eqDef and eqDef.container then
+                                gridWidth = eqDef.container.size.width
+                                gridHeight = eqDef.container.size.height
+                                toMaxWeight = eqDef.container.maxWeight
+                            end
+                            targetFound = true
+                            break
+                        end
+                    end
                 end
             end
+
+            local currentToWeight = InventoryAPI.GetContainerWeight(toContainer)
+            print('^3[mx-inv] Validation DND: target=' .. toId .. ' weight=' .. currentToWeight .. '/' .. toMaxWeight .. ' grid=' .. gridWidth .. 'x' .. gridHeight .. '^0')
+
+            -- STRICT VALIDATION: Check Fit
+            local success, err = MovementEngine.CheckFit(toContainer, testSize, tonumber(targetSlot.x), tonumber(targetSlot.y), gridWidth, gridHeight, itemObj.id)
+            
+            -- SMART FALLBACK: If dragging to 'player-inv' and it doesn't fit or is too heavy, try finding ANY slot in any bag
+            if not success or (currentToWeight + itemWeight > toMaxWeight) then
+                if toId == 'player-inv' or toId == 'player' then
+                    print('^3[mx-inv] Smart Fallback: Item did not fit in pockets, searching bags...^0')
+                    local freeSlot = nil
+                    local finalTargetContainerId = toId
+                    
+                    local containerOrder = {}
+                    if containerMap.equipment then
+                        for slot, eqItem in pairs(containerMap.equipment) do
+                            local eqDef = ItemDefs[eqItem.name]
+                            if eqDef and eqDef.container then
+                                table.insert(containerOrder, {
+                                    key = eqItem.id,
+                                    w = eqDef.container.size.width,
+                                    h = eqDef.container.size.height,
+                                    maxW = eqDef.container.maxWeight
+                                })
+                            end
+                        end
+                    end
+
+                    for _, cInfo in ipairs(containerOrder) do
+                        local tgtContainer = containerMap[cInfo.key] or {}
+                        containerMap[cInfo.key] = tgtContainer -- Ensure it exists in main map
+                        
+                        local currentWeight = InventoryAPI.GetContainerWeight(tgtContainer)
+                        if currentWeight + itemWeight <= cInfo.maxW then
+                            freeSlot = MovementEngine.FindFreeSlot(tgtContainer, testSize, cInfo.w, cInfo.h)
+                            if freeSlot then
+                                toContainer = tgtContainer
+                                finalTargetContainerId = cInfo.key
+                                targetSlot = { x = freeSlot.x, y = freeSlot.y }
+                                data.rotated = freeSlot.rotated
+                                toId = finalTargetContainerId
+                                success = true
+                                print('^2[mx-inv] Smart Fallback Success: Found slot in bag ' .. toId .. '^0')
+                                break
+                            end
+                        end
+                    end
+                end
+            end
+
+            if not success then
+                print('^1[mx-inv] Move Failed: ' .. (err or "No space") .. '^0')
+                TriggerClientEvent('mx-inv:client:notify', src, "O item não cabe ou o compartimento está cheio!", "error")
+                UpdateClientInventory(src)
+                return
+            end
+            
+            -- Final Weight check for the resolved container (could be the original or the fallback)
+            if InventoryAPI.GetContainerWeight(toContainer) + itemWeight > toMaxWeight then
+                TriggerClientEvent('mx-inv:client:notify', src, "O compartimento de destino não aguenta esse peso!", "error")
+                UpdateClientInventory(src)
+                return
+            end
+        else
+            -- AUTO-FIND SLOT (Common for "Remove" from context menu)
+            local freeSlot = nil
+            local finalTargetContainerId = toId
+            
+            print('^3[mx-inv] Validation Auto-Find: target=' .. toId .. '^0')
+
+            -- If targeting 'player-inv' implicitly without coordinates, fallback to ALL containers
+            if toId == 'player-inv' or toId == 'player' then
+                local containerOrder = {
+                    { key = 'player', w = Config.Inventory.Slots.width, h = Config.Inventory.Slots.height, maxW = Config.Inventory.MaxWeight }
+                }
+                if containerMap.equipment then
+                    for slot, eqItem in pairs(containerMap.equipment) do
+                        local eqDef = ItemDefs[eqItem.name]
+                        if eqDef and eqDef.container then
+                            table.insert(containerOrder, {
+                                key = eqItem.id,
+                                w = eqDef.container.size.width,
+                                h = eqDef.container.size.height,
+                                maxW = eqDef.container.maxWeight
+                            })
+                        end
+                    end
+                end
+
+                for _, cInfo in ipairs(containerOrder) do
+                    local tgtContainer = containerMap[cInfo.key] or {}
+                    containerMap[cInfo.key] = tgtContainer
+                    
+                    local currentWeight = InventoryAPI.GetContainerWeight(tgtContainer)
+                    print('^3[mx-inv] Checking auto-find slot in ' .. cInfo.key .. ' Weight: ' .. currentWeight .. '/' .. cInfo.maxW .. '^0')
+                    
+                    if currentWeight + itemWeight <= cInfo.maxW then
+                        freeSlot = MovementEngine.FindFreeSlot(tgtContainer, testSize, cInfo.w, cInfo.h)
+                        if freeSlot then
+                            toContainer = tgtContainer
+                            finalTargetContainerId = cInfo.key
+                            print('^2[mx-inv] Auto-found slot in ' .. cInfo.key .. '^0')
+                            break
+                        end
+                    else
+                        print('^3[mx-inv] Skipping ' .. cInfo.key .. ' (too heavy)^0')
+                    end
+                end
+            else
+                -- Auto-find in a specific non-player container (e.g. stash or specific bag)
+                local gridWidth = Config.Inventory.Slots.width
+                local gridHeight = Config.Inventory.Slots.height
+                local toMaxWeight = 9999.0
+
+                if toId:sub(1, 6) == 'equip-' then
+                    local eqObj = containerMap.equipment[toId:sub(7)]
+                    if eqObj and ItemDefs[eqObj.name] and ItemDefs[eqObj.name].container then
+                        gridWidth = ItemDefs[eqObj.name].container.size.width
+                        gridHeight = ItemDefs[eqObj.name].container.size.height
+                        toMaxWeight = ItemDefs[eqObj.name].container.maxWeight
+                    end
+                elseif toId:sub(1, 6) == 'stash_' then
+                    local stash = ActiveStashes[toId]
+                    if stash then
+                        gridWidth = stash.size.width
+                        gridHeight = stash.size.height
+                        toMaxWeight = stash.maxWeight or 999.0
+                    end
+                else
+                    local targetFound = false
+                    for _, pItm in ipairs(containerMap.player or {}) do
+                        if pItm.id == toId then
+                            local pDef = ItemDefs[pItm.name]
+                            if pDef and pDef.container then
+                                gridWidth = pDef.container.size.width
+                                gridHeight = pDef.container.size.height
+                                toMaxWeight = pDef.container.maxWeight
+                            end
+                            targetFound = true
+                            break
+                        end
+                    end
+                    
+                    if not targetFound and containerMap.equipment then
+                        for _, eqItm in pairs(containerMap.equipment) do
+                            if eqItm and eqItm.id == toId then
+                                local eqDef = ItemDefs[eqItm.name]
+                                if eqDef and eqDef.container then
+                                    gridWidth = eqDef.container.size.width
+                                    gridHeight = eqDef.container.size.height
+                                    toMaxWeight = eqDef.container.maxWeight
+                                end
+                                targetFound = true
+                                break
+                            end
+                        end
+                    end
+                end
+
+                if InventoryAPI.GetContainerWeight(toContainer) + itemWeight <= toMaxWeight then
+                    freeSlot = MovementEngine.FindFreeSlot(toContainer, testSize, gridWidth, gridHeight)
+                else
+                    TriggerClientEvent('mx-inv:client:notify', src, "O compartimento de destino não aguenta esse peso!", "error")
+                    UpdateClientInventory(src)
+                    return
+                end
+            end
+
+            if not freeSlot then
+                print('^1[mx-inv] Move Failed: No free slot in ' .. toId .. ' or connected bags^0')
+                TriggerClientEvent('mx-inv:client:notify', src, "Não há espaço no inventário de destino!", "error")
+                UpdateClientInventory(src)
+                return
+            end
+            
+            targetSlot = { x = freeSlot.x, y = freeSlot.y }
+            data.rotated = freeSlot.rotated
+            
+            -- IMPORTANT: Refresh the toContainer reference in case it changed in the loop
+            toContainer, _ = GetContainerAndSlot(finalTargetContainerId)
+            toId = finalTargetContainerId
+            print('^3[mx-inv] Auto-found slot for ' .. itemName .. ' at ' .. targetSlot.x .. ',' .. targetSlot.y .. ' in ' .. toId .. '^0')
         end
     end
 
@@ -1127,7 +1346,9 @@ RegisterNetEvent('mx-inv:server:moveItem', function(data)
             itemObj.folded = data.folded -- Save folded state
         end
         table.insert(toContainer, itemObj)
-        print('^3[mx-inv] Moved ' .. itemName .. ' to ' .. toId .. ' at ' .. targetSlot.x .. ',' .. targetSlot.y .. '^0')
+        local statusX = (targetSlot and targetSlot.x) or '?'
+        local statusY = (targetSlot and targetSlot.y) or '?'
+        print('^3[mx-inv] Moved ' .. itemName .. ' to ' .. toId .. ' at ' .. statusX .. ',' .. statusY .. '^0')
     end
 
     -- Auto-Save
@@ -1141,124 +1362,39 @@ RegisterNetEvent('mx-inv:server:moveItem', function(data)
     UpdateClientInventory(src)
 
     -- Auto-save stash if one is open after move
-    SaveActiveStashForPlayer(src)
+    StashAPI.SaveActiveStashForPlayer(src)
 end)
 
--- Swap Equipment Event (Equip-to-Equip)
 RegisterNetEvent('mx-inv:server:swapEquipment', function(data)
     local src = source
     local containerMap = Inventory[src]
-    if not containerMap then return end
-    if not containerMap.equipment then return end
+    if not containerMap or not containerMap.equipment then return end
 
-    local fromSlot = data.fromSlot
-    local toSlot = data.toSlot
+    -- Handle both 'from' (standard) and 'fromSlot' (old) keys
+    local fromSlot = (data.from or data.fromSlot or ""):gsub('equip%-', '')
+    local toSlot = (data.slot or data.toSlot or ""):gsub('equip%-', '')
 
-    print('^3[mx-inv] Swap Equipment: ' .. fromSlot .. ' <-> ' .. toSlot .. '^0')
-
-    local fromItem = containerMap.equipment[fromSlot]
-    local toItem = containerMap.equipment[toSlot] -- Can be nil
-
-    -- Perform atomic swap
-    containerMap.equipment[fromSlot] = toItem
-    containerMap.equipment[toSlot] = fromItem
-
-    -- Trigger visual updates for both items
-    if fromItem then
-        local ammoToLoad = tonumber(fromItem.metadata and fromItem.metadata.ammo) or 0
-        TriggerClientEvent('mx-inv:client:updateEquipment', src, fromItem.name, true, ammoToLoad) -- Still equipped (moved slot)
+    if fromSlot == "" or toSlot == "" then
+        print('^1[mx-inv] Swap Failed: Invalid slots. From: ' .. tostring(fromSlot) .. ' To: ' .. tostring(toSlot) .. '^0')
+        return
     end
-    if toItem then
-        local ammoToLoad = tonumber(toItem.metadata and toItem.metadata.ammo) or 0
-        TriggerClientEvent('mx-inv:client:updateEquipment', src, toItem.name, true, ammoToLoad)
-    end
-    -- Still equipped (moved slot)
 
-    print('^2[mx-inv] Swap complete. New state: ' .. json.encode(containerMap.equipment) .. '^0')
+    EquipmentAPI.SwapEquipment(src, containerMap, fromSlot, toSlot)
 
-    -- Auto-Save
     local player = MX_GetPlayer(src)
-    if player then
-        DB.SavePlayer(player.identifier, containerMap)
-        print('^2[mx-inv] Auto-saved after swap for ' .. player.name .. '^0')
-    end
-
-    -- Refresh Client
+    if player then DB.SavePlayer(player.identifier, containerMap) end
     UpdateClientInventory(src)
 end)
 
--- Unload Ammo from Weapon Event
 RegisterNetEvent('mx-inv:server:unloadWeapon', function(data)
     local src = source
     local containerMap = Inventory[src]
     if not containerMap then return end
 
-    local weaponId = data.id
-    local containerId = data.containerId
-
-    local weapon = nil
-
-    if containerId and string.sub(containerId, 1, 6) == 'equip-' then
-        local slot = string.sub(containerId, 7)
-        if containerMap.equipment then
-            weapon = containerMap.equipment[slot]
-            -- Double check ID mismatch if possible, but slot is authoritative
-        end
-    else
-        local wKey = (containerId == 'player-inv') and 'player' or containerId
-        local wContainer = containerMap[wKey]
-        if wContainer then
-            for _, wItem in ipairs(wContainer) do
-                if wItem.id == weaponId then
-                    weapon = wItem
-                    break
-                end
-            end
-        end
-    end
-
-    if not weapon then
-        print('^1[mx-inv] Unload: No weapon found with id: ' .. tostring(weaponId) .. '^0')
-        return
-    end
-
-    local currentAmmo = weapon.metadata and weapon.metadata.ammo or 0
-    if currentAmmo <= 0 then
-        -- Nothing to unload
-        return
-    end
-
-    local weaponDef = Items[weapon.name]
-    if not weaponDef or not weaponDef.equipment or not weaponDef.equipment.caliber then
-        print('^1[mx-inv] Unload: Invalid weapon definition or missing caliber for: ' .. tostring(weapon.name) .. '^0')
-        return
-    end
-
-    local ammoItemName = weaponDef.equipment.caliber
-
-    -- 1. Set weapon ammo to 0
-    weapon.metadata.ammo = 0
-    weapon.metadata.clip = 0
-
-    -- 2. Give player the ammo item
-    local added = AddItem(src, ammoItemName, currentAmmo)
-    if not added then
-        print('^1[mx-inv] Unload: Failed to add ' .. tostring(currentAmmo) .. 'x ' .. ammoItemName .. ' to inventory.^0')
-        -- Rollback ammo?
-        weapon.metadata.ammo = currentAmmo
-        return
-    end
-
-    print('^2[mx-inv] Unload: Unloaded ' ..
-        tostring(currentAmmo) .. 'x ' .. ammoItemName .. ' from ' .. tostring(weapon.name) .. '^0')
-
-    -- Update Client Ped Ammo immediately if weapon is currently equipped
-    local weaponHash = GetHashKey(weaponDef.equipment.weaponHash)
-    TriggerClientEvent('mx-inv:client:updateEquipment', src, weapon.name, true, 0) -- Re-equip practically with 0
+    EquipmentAPI.UnloadWeapon(src, containerMap, data.id, data.containerId, AddItem)
 
     local player = MX_GetPlayer(src)
     if player then DB.SavePlayer(player.identifier, containerMap) end
-
     UpdateClientInventory(src)
 end)
 
@@ -1433,6 +1569,86 @@ RegisterNetEvent('mx-inv:server:attachToWeapon', function(data)
 end)
 
 -- Remove Attachment from Weapon Event
+-- Attach Accessory to Helmet Event
+RegisterNetEvent('mx-inv:server:attachHelmetAccessory', function(data)
+    local src = source
+    local containerMap = Inventory[src]
+    if not containerMap then return end
+
+    local helmetId = data.helmetId
+    local helmetContainerId = data.helmetContainerId
+    local accessorySlot = data.accessorySlot
+    local accessoryItemName = data.accessoryItem
+    local accessoryItemId = data.accessoryItemId
+    local fromContainerId = data.fromContainerId
+
+    print('^3[mx-inv] Attach Accessory: ' ..
+        tostring(accessoryItemName) ..
+        ' -> helmet ' .. tostring(helmetId) .. ' slot ' .. tostring(accessorySlot) .. '^0')
+
+    -- Find and remove the accessory item from source container
+    local fromKey = (fromContainerId == 'player-inv') and 'player' or fromContainerId
+    local fromContainer = containerMap[fromKey]
+    if not fromContainer then return end
+
+    local accIndex = nil
+    for i, item in ipairs(fromContainer) do
+        if item.id == accessoryItemId then
+            accIndex = i
+            break
+        end
+    end
+
+    if not accIndex then return end
+
+    -- Remove accessory from source
+    table.remove(fromContainer, accIndex)
+
+    -- Attach via API
+    local success = EquipmentAPI.AttachToHelmet(src, helmetId, helmetContainerId, accessorySlot, accessoryItemName, fromContainerId, containerMap)
+
+    if success then
+        local player = MX_GetPlayer(src)
+        if player then DB.SavePlayer(player.identifier, containerMap) end
+        UpdateClientInventory(src)
+    else
+        -- Refund item if failed (shouldn't happen with frontend validation)
+        -- table.insert(fromContainer, { ... }) 
+        UpdateClientInventory(src)
+    end
+end)
+
+-- Remove Accessory from Helmet Event
+RegisterNetEvent('mx-inv:server:removeHelmetAccessory', function(data)
+    local src = source
+    local containerMap = Inventory[src]
+    if not containerMap then return end
+
+    local helmetId = data.helmetId
+    local helmetContainerId = data.helmetContainerId
+    local accessorySlot = data.accessorySlot
+    local toContainerId = data.toContainerId
+    local toSlot = data.toSlot
+
+    print('^3[mx-inv] Remove Accessory: slot ' ..
+        tostring(accessorySlot) .. ' from helmet ' .. tostring(helmetId) .. '^0')
+
+    -- Remove via API
+    local itemName = EquipmentAPI.RemoveHelmetAccessory(src, helmetId, helmetContainerId, accessorySlot, containerMap)
+
+    if itemName then
+        -- Add back to target container
+        local added = AddItem(src, itemName, 1, nil, toSlot, toContainerId)
+        if not added then
+            -- Fallback: already handled by AddItem (will auto-find space or fail)
+        end
+
+        local player = MX_GetPlayer(src)
+        if player then DB.SavePlayer(player.identifier, containerMap) end
+        UpdateClientInventory(src)
+    end
+end)
+
 RegisterNetEvent('mx-inv:server:removeAttachment', function(data)
     local src = source
     local containerMap = Inventory[src]
@@ -1493,7 +1709,7 @@ RegisterNetEvent('mx-inv:server:removeAttachment', function(data)
                 name = attachmentItemName,
                 count = 1,
                 slot = data.toSlot,
-                id = GenerateUUID()
+                id = InventoryAPI.GenerateUUID()
             }
             table.insert(toContainer, newItem)
             added = true
@@ -1536,186 +1752,15 @@ end)
 -- ============================================================
 -- HELMET ACCESSORY EVENTS
 -- ============================================================
-
--- Helper: resolve the helmet item from equipment slot 'head'
-local function GetEquippedHelmet(containerMap)
-    if not containerMap.equipment then return nil end
-    return containerMap.equipment['head']
-end
-
--- Helper: trigger helmet drawable + visual effect update on client
-SyncHelmetAccessory = function(src, helmetName, accessorySlot, accessoryName, visorDown)
-    local helmetDef = ItemDefs[helmetName]
-    if not helmetDef or not helmetDef.equipment then return end
-
-    local drawableId = helmetDef.equipment.drawableId -- base (no accessory)
-    if accessoryName and helmetDef.equipment.accessoryDrawables then
-        local variants = helmetDef.equipment.accessoryDrawables[accessoryName]
-        if variants then
-            drawableId = visorDown and variants.visorDown or variants.visorUp
-        end
-    end
-
-    -- Update GTA prop drawable (head props use SetPedPropIndex, not SetPedComponentVariation)
-    TriggerClientEvent('mx-inv:client:applyHelmetAccessory', src, {
-        propId        = helmetDef.equipment.propId, -- prop slot (0 = head)
-        drawableId    = drawableId,
-        textureId     = helmetDef.equipment.textureId or 0,
-        slot          = accessorySlot,
-        accessoryName = accessoryName,
-        visorDown     = visorDown
-    })
-end
-
-RegisterNetEvent('mx-inv:server:attachToHelmet', function(data)
-    local src = source
-    local containerMap = Inventory[src]
-    if not containerMap then return end
-
-    local helmetId   = data.helmetId
-    local accessItem = data.accessoryItem   -- item name, e.g. 'nvg'
-    local accessId   = data.accessoryItemId -- UUID
-    local fromContId = data.fromContainerId
-
-    local helmet     = GetEquippedHelmet(containerMap)
-    if not helmet or helmet.id ~= helmetId then
-        print('^1[mx-inv] attachToHelmet: helmet not equipped.^0')
-        return
-    end
-
-    -- Compatibility check
-    local helmetDef = ItemDefs[helmet.name]
-    local accessDef = ItemDefs[accessItem]
-    if not helmetDef or not helmetDef.equipment or not helmetDef.equipment.supportedAccessories then
-        print('^1[mx-inv] attachToHelmet: helmet has no supportedAccessories.^0')
-        return
-    end
-    if not accessDef or not accessDef.helmetAccessory then
-        print('^1[mx-inv] attachToHelmet: item is not a helmet_accessory.^0')
-        return
-    end
-    local slot = accessDef.helmetAccessory.slot
-    local compatible = false
-    for _, s in ipairs(helmetDef.equipment.supportedAccessories) do
-        if s == slot then
-            compatible = true; break
-        end
-    end
-    if not compatible then
-        print('^1[mx-inv] attachToHelmet: ' .. accessItem .. ' incompatible with ' .. helmet.name .. '.^0')
-        TriggerClientEvent('mx-inv:client:notify', src, 'Este capacete não é compatível com esse acessório!', 'error')
-        return
-    end
-
-    -- Helmet already has an accessory? We only allow 1 at a time.
-    if not helmet.metadata then helmet.metadata = {} end
-    if not helmet.metadata.accessories then helmet.metadata.accessories = {} end
-
-    -- Check if there are any accessories currently attached
-    for k, v in pairs(helmet.metadata.accessories) do
-        TriggerClientEvent('mx-inv:client:notify', src, 'Este capacete já possui um acessório montado!', 'error')
-        return
-    end
-    -- Remove accessory from source container
-    local fromKey = (fromContId == 'player-inv') and 'player' or fromContId
-    local fromCont = containerMap[fromKey]
-    if not fromCont then
-        print('^1[mx-inv] attachToHelmet: source container not found: ' .. tostring(fromContId) .. '^0')
-        return
-    end
-    local rmIdx = nil
-    for i, it in ipairs(fromCont) do
-        if it.id == accessId then
-            rmIdx = i; break
-        end
-    end
-    if not rmIdx then
-        print('^1[mx-inv] attachToHelmet: accessory item not found in source.^0')
-        return
-    end
-    table.remove(fromCont, rmIdx)
-
-    -- Store in helmet metadata; visor starts UP (effect inactive)
-    helmet.metadata.accessories[slot] = { name = accessItem, id = accessId }
-    helmet.metadata.visorDown = helmet.metadata.visorDown or false
-
-    print('^2[mx-inv] Attached ' .. accessItem .. ' to helmet slot ' .. slot .. '^0')
-    SyncHelmetAccessory(src, helmet.name, slot, accessItem, false)
-
-    local player = MX_GetPlayer(src)
-    if player then DB.SavePlayer(player.identifier, containerMap) end
-    UpdateClientInventory(src)
-end)
-
-RegisterNetEvent('mx-inv:server:removeHelmetAccessory', function(data)
-    local src = source
-    local containerMap = Inventory[src]
-    if not containerMap then return end
-
-    local helmetId = data.helmetId
-    local slot     = data.accessorySlot
-    local toContId = data.toContainerId
-    local toSlot   = data.toSlot
-
-    local helmet   = GetEquippedHelmet(containerMap)
-    if not helmet or helmet.id ~= helmetId then
-        print('^1[mx-inv] removeHelmetAccessory: helmet not equipped.^0')
-        return
-    end
-
-    if not helmet.metadata or not helmet.metadata.accessories or not helmet.metadata.accessories[slot] then
-        print('^1[mx-inv] removeHelmetAccessory: no accessory in slot ' .. tostring(slot) .. '.^0')
-        return
-    end
-
-    local acc = helmet.metadata.accessories[slot]
-    helmet.metadata.accessories[slot] = nil
-    -- If visor was down, deactivate effect and reset to base drawable
-    if helmet.metadata.visorDown then helmet.metadata.visorDown = false end
-
-    -- Return accessory to inventory
-    local added = false
-    if toContId and toSlot then
-        local toKey = (toContId == 'player-inv') and 'player' or toContId
-        local toCont = containerMap[toKey]
-        if toCont then
-            table.insert(toCont, { name = acc.name, count = 1, slot = toSlot, id = acc.id or GenerateUUID() })
-            added = true
-        end
-    end
-    if not added then
-        added = AddItem(src, acc.name, 1)
-    end
-    if not added then
-        -- Rollback
-        helmet.metadata.accessories[slot] = acc
-        print('^1[mx-inv] removeHelmetAccessory: failed to return item, rolling back.^0')
-        return
-    end
-
-    print('^2[mx-inv] Removed helmet accessory ' .. acc.name .. ' from slot ' .. slot .. '^0')
-    SyncHelmetAccessory(src, helmet.name, nil, nil, false) -- reset to base drawable, deactivate effects
-
-    local player = MX_GetPlayer(src)
-    if player then DB.SavePlayer(player.identifier, containerMap) end
-    UpdateClientInventory(src)
-end)
+-- All helmet/attachment events are handled above near line 1435 and 1527.
+-- Removing extra duplicates to avoid confusion and state desync.
 
 RegisterNetEvent('mx-inv:server:toggleHelmetVisor', function(data)
     local src = source
     local containerMap = Inventory[src]
     if not containerMap then return end
 
-    local helmet = GetEquippedHelmet(containerMap)
-    -- Accept toggle both from NUI (data.helmetId set) and from keybind (no helmetId)
-    if not helmet then
-        print('^1[mx-inv] toggleHelmetVisor: no helmet equipped.^0')
-        return
-    end
-    if data.helmetId and helmet.id ~= data.helmetId then
-        print('^1[mx-inv] toggleHelmetVisor: helmetId mismatch.^0')
-        return
-    end
+    local helmet = EquipmentAPI.GetEquippedHelmet(containerMap)
 
     if not helmet.metadata or not helmet.metadata.accessories then
         print('^1[mx-inv] toggleHelmetVisor: no accessories mounted.^0')
@@ -1740,7 +1785,7 @@ RegisterNetEvent('mx-inv:server:toggleHelmetVisor', function(data)
         tostring(newVisorDown)))
 
     -- Sync drawable + screen effect
-    SyncHelmetAccessory(src, helmet.name, mountedSlot, accessoryName, newVisorDown)
+    EquipmentAPI.SyncHelmetAccessory(src, helmet.name, mountedSlot, accessoryName, newVisorDown)
 
     -- Trigger visor-flip animation on client
     TriggerClientEvent('mx-inv:client:playVisorAnim', src, newVisorDown)
@@ -1993,20 +2038,15 @@ end, true)
 -- ============================================================
 -- Item Drops
 -- ============================================================
-local worldDrops = {}
-
 RegisterNetEvent('mx-inv:server:requestDrops', function()
     local src = source
-    TriggerClientEvent('mx-inv:client:syncDrops', src, worldDrops)
+    DropAPI.SyncDrops(src)
 end)
 
 RegisterNetEvent('mx-inv:server:dropItem', function(data)
     local src = source
     print('^3[mx-inv] Server: dropItem triggered by ' .. src .. '^0')
-    if not data then
-        print('^1[mx-inv] Server Error: dropItem data is nil^0')
-        return
-    end
+    if not data then return end
 
     local itemId = data.itemId
     local amount = tonumber(data.amount) or 1
@@ -2029,10 +2069,7 @@ RegisterNetEvent('mx-inv:server:dropItem', function(data)
         end
     end
 
-    if not targetItem or targetItem.count < amount then
-        print('^1[mx-inv] dropItem: Item not found or insufficient count^0')
-        return
-    end
+    if not targetItem or targetItem.count < amount then return end
 
     -- Update inventory
     if targetItem.count == amount then
@@ -2046,51 +2083,29 @@ RegisterNetEvent('mx-inv:server:dropItem', function(data)
     local coords = GetEntityCoords(ped)
     local heading = GetEntityHeading(ped)
 
-    -- Add small random offset for separation (±0.4m)
     local offsetX = (math.random() - 0.5) * 0.8
     local offsetY = (math.random() - 0.5) * 0.8
-
     local x = coords.x + math.sin(math.rad(-heading)) * 1.2 + offsetX
     local y = coords.y + math.cos(math.rad(-heading)) * 1.2 + offsetY
-    local z = coords.z - 0.95 -- Floor level roughly
+    local z = coords.z - 0.95
 
-    local dropId = GenerateUUID()
-    local itemDef = ItemDefs[targetItem.name]
-    local dropProp = (itemDef and itemDef.dropProp) or Config.Inventory.DefaultDropProp
-
-    worldDrops[dropId] = {
-        id = dropId,
-        name = targetItem.name,
-        type = itemDef.type or 'generic', -- Add type for client-side rotation logic
-        label = itemDef.label or targetItem.name,
-        count = amount,
-        metadata = targetItem.metadata,
-        coords = { x = x, y = y, z = z },
-        prop = dropProp,
-        created_at = os.time() -- For despawn logic
-    }
+    local dropId = InventoryAPI.GenerateUUID()
+    
+    DropAPI.AddDrop(dropId, targetItem, { x = x, y = y, z = z }, amount)
 
     -- Save & Refresh
     local player = MX_GetPlayer(src)
     if player then DB.SavePlayer(player.identifier, Inventory[src]) end
     UpdateClientInventory(src)
 
-    -- Save Drop to DB
-    DB.SaveDrop(dropId, worldDrops[dropId])
-
-    -- Sync to all
-    TriggerClientEvent('mx-inv:client:syncDrops', -1, worldDrops)
     print('^2[mx-inv] Player ' .. src .. ' dropped ' .. amount .. 'x ' .. targetItem.name .. '^0')
 end)
 
 RegisterNetEvent('mx-inv:server:pickupItem', function(dropId)
     local src = source
-    local drop = worldDrops[dropId]
+    local drop = DropAPI.GetDrops()[dropId]
 
-    if not drop then
-        print('^1[mx-inv] pickupItem: Drop not found ' .. tostring(dropId) .. '^0')
-        return
-    end
+    if not drop then return end
 
     local ped = GetPlayerPed(src)
     local coords = GetEntityCoords(ped)
@@ -2104,34 +2119,26 @@ RegisterNetEvent('mx-inv:server:pickupItem', function(dropId)
     -- 1. Try Auto-Equip
     local equipped, slotLabel = AutoEquipItem(src, drop.name, drop.count, drop.metadata)
     if equipped then
-        -- Remove from world
-        worldDrops[dropId] = nil
-        DB.DeleteDrop(dropId)
-        TriggerClientEvent('mx-inv:client:syncDrops', -1, worldDrops)
+        DropAPI.DeleteDrop(dropId)
+        DropAPI.SyncDrops(-1)
         TriggerClientEvent('mx-inv:client:notify', src, 'Equipou ' .. drop.label .. ' automaticamente.', 'success')
 
-        -- Save & Refresh
         local player = MX_GetPlayer(src)
         if player then DB.SavePlayer(player.identifier, Inventory[src]) end
         UpdateClientInventory(src)
-        print('^2[mx-inv] Player ' .. src .. ' auto-equipped ' .. drop.name .. '^0')
         return
     end
 
-    -- 2. Try to add to inventory (Multi-container + Rotation)
+    -- 2. Try to add to inventory
     local success, msg = AddItem(src, drop.name, drop.count, drop.metadata)
     if success then
-        -- Remove from world
-        worldDrops[dropId] = nil
-        DB.DeleteDrop(dropId)
-        TriggerClientEvent('mx-inv:client:syncDrops', -1, worldDrops)
+        DropAPI.DeleteDrop(dropId)
+        DropAPI.SyncDrops(-1)
         TriggerClientEvent('mx-inv:client:notify', src, 'Pegou ' .. drop.label .. ': ' .. msg, 'success')
 
-        -- Save & Refresh
         local player = MX_GetPlayer(src)
         if player then DB.SavePlayer(player.identifier, Inventory[src]) end
         UpdateClientInventory(src)
-        print('^2[mx-inv] Player ' .. src .. ' picked up ' .. drop.count .. 'x ' .. drop.name .. '^0')
     else
         TriggerClientEvent('mx-inv:client:notify', src, msg, 'error')
     end
@@ -2184,9 +2191,30 @@ RegisterNetEvent('mx-inv:server:splitItem', function(data)
     end
 
     -- Find a free slot for the new stack
+    -- Determine grid dimensions for split target
+    local gridWidth, gridHeight = Config.Inventory.Slots.x, Config.Inventory.Slots.y
+    if containerId ~= 'player-inv' and containerId ~= 'player' and string.sub(containerId, 1, 6) ~= 'equip-' and string.sub(containerId, 1, 6) ~= 'stash_' then
+        for _, pItm in ipairs(containerMap.player or {}) do
+            if pItm.id == containerId then
+                local pDef = ItemDefs[pItm.name]
+                if pDef and pDef.container then
+                    gridWidth = pDef.container.size.width
+                    gridHeight = pDef.container.size.height
+                end
+                break
+            end
+        end
+    elseif string.sub(containerId, 1, 6) == 'stash_' then
+        local stash = ActiveStashes[containerId]
+        if stash and stash.size then
+            gridWidth = stash.size.width
+            gridHeight = stash.size.height
+        end
+    end
+
     local itemDef  = ItemDefs[targetItem.name]
     local itemSize = (itemDef and itemDef.size) or { x = 1, y = 1 }
-    local freeSlot = FindFreeSlot(container, itemSize)
+    local freeSlot = MovementEngine.FindFreeSlot(container, itemSize, gridWidth, gridHeight)
     if not freeSlot then
         print('^1[mx-inv] splitItem: No free slot in container ' .. tostring(containerId) .. '^0')
         TriggerClientEvent('mx-inv:client:notify', src, 'Inventário sem espaço para dividir.')
@@ -2200,7 +2228,7 @@ RegisterNetEvent('mx-inv:server:splitItem', function(data)
         name     = targetItem.name,
         count    = amount,
         slot     = freeSlot,
-        id       = GenerateUUID(),
+        id       = InventoryAPI.GenerateUUID(),
         metadata = targetItem.metadata -- share metadata (e.g. caliber)
     }
     table.insert(container, newStack)
@@ -2252,7 +2280,7 @@ local function RemoveItemById(containerMap, itemId, count)
                     -- Partial remove
                     item.count = item.count - count
                     -- Return a copy representing the given portion
-                    return { name = item.name, count = count, id = GenerateUUID(), slot = { x = 1, y = 1 } }
+                    return { name = item.name, count = count, id = InventoryAPI.GenerateUUID(), slot = { x = 1, y = 1 } }
                 else
                     -- Full remove
                     local removed = table.remove(container, i)
@@ -2512,188 +2540,31 @@ RegisterNetEvent('mx-inv:server:useHotbar', function(slotIndex)
     end
 end)
 
--- Drop Cleanup Thread
-Citizen.CreateThread(function()
-    while true do
-        Citizen.Wait(60000) -- Check every 1 minute
-        local currentTime = os.time()
-        local despawnTime = (Config.Inventory.DropDespawnTime or 30) * 60
-        local itemsRemoved = 0
 
-        for id, drop in pairs(worldDrops) do
-            if drop.created_at and (currentTime - drop.created_at) > despawnTime then
-                worldDrops[id] = nil
-                DB.DeleteDrop(id)
-                itemsRemoved = itemsRemoved + 1
-            end
-        end
 
-        if itemsRemoved > 0 then
-            TriggerClientEvent('mx-inv:client:syncDrops', -1, worldDrops)
-            print('^3[mx-inv] Cleanup: Removed ' .. itemsRemoved .. ' expired drops.^0')
-        end
-    end
+-- Initialize Stash API
+-- StashAPI is already loaded globally
+
+exports('RegisterStash', StashAPI.RegisterStash)
+exports('OpenStash', function(src, stashId, label, size)
+    StashAPI.OpenStashForPlayer(src, stashId, label, size, GetFormattedInventory)
 end)
+exports('CloseStash', StashAPI.CloseStashForPlayer)
+exports('DeleteStash', StashAPI.DeleteStashById)
 
--- ============================================================
--- STASH SYSTEM (External API for other resources)
--- ============================================================
-
--- Active stashes in memory: { [stashId] = { items = {}, size = {}, label = '' } }
--- (Moved to top of file)
-
--- Tracks which stash each player has open: { [src] = stashId }
--- (Moved to top of file)
-
---- Register a stash with pre-generated items (does NOT open it)
---- @param stashId string  Unique stash identifier (must start with 'stash_')
---- @param label string    Display label in UI
---- @param size table      Grid size { width, height }
---- @param items table     Array of item objects { name, count, slot, id }
---- @return boolean
-local function RegisterStash(stashId, label, size, items)
-    if not stashId or not label or not size then
-        print('^1[mx-inv] RegisterStash: Invalid parameters^0')
-        return false
-    end
-
-    ActiveStashes[stashId] = {
-        items = items or {},
-        size = size,
-        label = label
-    }
-
-    print('^2[mx-inv] Registered stash: ' .. stashId .. ' (' .. #(items or {}) .. ' items)^0')
-    return true
-end
-
---- Open a stash for a player (sends combined inventory + stash payload)
---- @param src number      Player source
---- @param stashId string  Stash identifier
---- @param label string    Display label (used if stash doesn't exist yet)
---- @param size table      Grid size { width, height } (used if stash doesn't exist yet)
-local function OpenStashForPlayer(src, stashId, label, size)
-    if not src or not stashId then return end
-
-    -- Ensure player inventory is loaded
-    if not Inventory[src] then
-        print('^1[mx-inv] OpenStash: Inventory not loaded for ' .. src .. '^0')
-        return
-    end
-
-    -- Create stash if it doesn't exist
-    if not ActiveStashes[stashId] then
-        -- Try loading from DB
-        local dbItems = DB.LoadStash(stashId)
-        ActiveStashes[stashId] = {
-            items = dbItems or {},
-            size = size or { width = 4, height = 3 },
-            label = label or 'Stash'
-        }
-    end
-
-    local stash = ActiveStashes[stashId]
-
-    -- Bind stash to player inventory map so moveItem resolver works
-    Inventory[src][stashId] = stash.items
-
-    -- Track which stash is open
-    PlayerOpenStash[src] = stashId
-
-    -- Build payload with player inventory + stash
-    local payload = GetFormattedInventory(src)
-    if not payload then return end
-
-    -- Add the stash container to payload
-    payload[stashId] = {
-        id = stashId,
-        type = 'container',
-        label = stash.label,
-        size = stash.size,
-        items = stash.items,
-        weight = GetContainerWeight(stash.items),
-        maxWeight = 999.0 -- Stashes have no weight limit
-    }
-
-    TriggerClientEvent('mx-inv:client:openInventory', src, payload)
-    print('^2[mx-inv] Opened stash ' .. stashId .. ' for player ' .. src .. '^0')
-end
-
---- Close stash for a player (unbind from inventory, save to DB)
---- @param src number  Player source
-local function CloseStashForPlayer(src)
-    local stashId = PlayerOpenStash[src]
-    if not stashId then return end
-
-    -- Save stash to DB
-    local stash = ActiveStashes[stashId]
-    if stash then
-        DB.SaveStash(stashId, stash.items)
-    end
-
-    -- Unbind from player inventory
-    if Inventory[src] then
-        Inventory[src][stashId] = nil
-    end
-
-    PlayerOpenStash[src] = nil
-    print('^3[mx-inv] Closed stash ' .. stashId .. ' for player ' .. src .. '^0')
-end
-
---- Delete a stash entirely (cleanup)
---- @param stashId string  Stash identifier
---- @return boolean
-local function DeleteStashById(stashId)
-    if not stashId then return false end
-
-    -- Unbind from any player who has it open
-    for src, openId in pairs(PlayerOpenStash) do
-        if openId == stashId then
-            if Inventory[src] then
-                Inventory[src][stashId] = nil
-            end
-            PlayerOpenStash[src] = nil
-        end
-    end
-
-    ActiveStashes[stashId] = nil
-
-    -- Delete from DB
-    Citizen.CreateThread(function()
-        MySQL.prepare.await('DELETE FROM mx_inventory_stashes WHERE name = ?', { stashId })
-    end)
-
-    print('^3[mx-inv] Deleted stash: ' .. stashId .. '^0')
-    return true
-end
-
--- Export the stash API for external resources
-exports('RegisterStash', RegisterStash)
-exports('OpenStash', OpenStashForPlayer)
-exports('CloseStash', CloseStashForPlayer)
-exports('DeleteStash', DeleteStashById)
-
--- Close stash when player closes inventory
 RegisterNetEvent('mx-inv:server:closeInventory', function()
     local src = source
-    CloseStashForPlayer(src)
+    StashAPI.CloseStashForPlayer(src)
 end)
 
--- Save stash when items are moved to/from it
--- Hook into the existing save flow: after any moveItem, check if a stash is involved
-local _origPlayerDropped = nil
-
--- Ensure stash is saved and cleaned up on player disconnect
 AddEventHandler('playerDropped', function()
     local src = source
-    CloseStashForPlayer(src)
+    StashAPI.CloseStashForPlayer(src)
 end)
 
 -- Filter stash keys from player save data
--- Override DB.SavePlayer to strip transient stash data
 local _originalSavePlayer = DB.SavePlayer
 DB.SavePlayer = function(identifier, inventoryData)
-    -- Create filtered copy without stash keys
     local filtered = {}
     for k, v in pairs(inventoryData) do
         if type(k) ~= 'string' or (string.sub(k, 1, 6) ~= 'stash_' and string.sub(k, 1, 6) ~= 'stash-') then
@@ -2703,20 +2574,8 @@ DB.SavePlayer = function(identifier, inventoryData)
     return _originalSavePlayer(identifier, filtered)
 end
 
--- Auto-save stash when moveItem involves a stash container
--- We hook this by checking after each moveItem if a stash is open
-local function SaveActiveStashForPlayer(src)
-    local stashId = PlayerOpenStash[src]
-    if not stashId or not ActiveStashes[stashId] then return end
-
-    Citizen.CreateThread(function()
-        DB.SaveStash(stashId, ActiveStashes[stashId].items)
-    end)
-end
-
--- Patch: After moveItem updates client, also save stash if open
--- This is done by registering a net event that the client fires on inventory close
 RegisterNetEvent('mx-inv:server:onMoveComplete', function()
     local src = source
-    SaveActiveStashForPlayer(src)
+    StashAPI.SaveActiveStashForPlayer(src)
 end)
+

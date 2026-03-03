@@ -1,0 +1,165 @@
+-- client/modules/equipment.lua
+-- Centralized visual and behavior updates for equipment (weapons, clothing, hats)
+
+local lastAmmoCache = {}
+
+-- Play Animation (Consume)
+RegisterNetEvent('mx-inv:client:playAnim', function(data)
+    local ped = PlayerPedId()
+    local animDict = data.animDict
+    local animName = data.anim
+    local propModel = data.prop
+    local duration = 5000
+
+    if not animDict or not animName then return end
+
+    RequestAnimDict(animDict)
+    while not HasAnimDictLoaded(animDict) do Wait(10) end
+
+    local propObj = nil
+    if propModel then
+        local hash = GetHashKey(propModel)
+        RequestModel(hash)
+        while not HasModelLoaded(hash) do Wait(10) end
+
+        local coords = GetEntityCoords(ped)
+        propObj = CreateObject(hash, coords.x, coords.y, coords.z + 0.2, true, true, true)
+        local boneIndex = GetPedBoneIndex(ped, 18905)
+        AttachEntityToEntity(propObj, ped, boneIndex, 0.12, 0.028, 0.001, 10.0, 175.0, 0.0, true, true, false, true, 1, true)
+    end
+
+    TaskPlayAnim(ped, animDict, animName, 8.0, -8.0, duration, 49, 0, false, false, false)
+    Wait(duration)
+    StopAnimTask(ped, animDict, animName, 1.0)
+    if propObj then DeleteObject(propObj) end
+end)
+
+-- Update Equipment Visuals (Give weapon, apply clothing, apply attachments)
+RegisterNetEvent('mx-inv:client:updateEquipment', function(itemName, isEquipping, ammoToLoad, attachments)
+    local ped = PlayerPedId()
+    local def = Items and Items[itemName]
+    if not def or not def.equipment then return end
+
+    local eq = def.equipment
+
+    -- Weapon Logic
+    if eq.weaponHash then
+        local hash = GetHashKey(eq.weaponHash)
+        if isEquipping then
+            GiveWeaponToPed(ped, hash, 0, false, false)
+            SetPedAmmo(ped, hash, ammoToLoad or 0)
+            if attachments then
+                for slot, attachName in pairs(attachments) do
+                    if attachName then
+                        local attachDef = Items[attachName]
+                        if attachDef and attachDef.attachment and attachDef.attachment.componentHash then
+                            local compHash = GetHashKey(attachDef.attachment.componentHash)
+                            if compHash ~= 0 then GiveWeaponComponentToPed(ped, hash, compHash) end
+                        end
+                    end
+                end
+            end
+        else
+            RemoveWeaponFromPed(ped, hash)
+        end
+    end
+
+    -- Clothing / Prop Logic
+    if eq.propId ~= nil and eq.drawableId then
+        if isEquipping then
+            SetPedPropIndex(ped, eq.propId, eq.drawableId, eq.textureId or 0, true)
+        else
+            ClearPedProp(ped, eq.propId)
+        end
+    elseif eq.componentId and eq.drawableId then
+        if isEquipping then
+            SetPedComponentVariation(ped, eq.componentId, eq.drawableId, eq.textureId or 0, 2)
+        else
+            SetPedComponentVariation(ped, eq.componentId, 0, 0, 2)
+        end
+    end
+end)
+
+-- Set Active Weapon (Hotbar)
+RegisterNetEvent('mx-inv:client:setActiveWeapon', function(weaponHash)
+    local ped = PlayerPedId()
+    if weaponHash then
+        local hash = (type(weaponHash) == 'string') and GetHashKey(weaponHash) or weaponHash
+        local currentWeapon = GetSelectedPedWeapon(ped)
+        if currentWeapon == hash then
+            SetCurrentPedWeapon(ped, GetHashKey("WEAPON_UNARMED"), true)
+        else
+            SetCurrentPedWeapon(ped, hash, true)
+        end
+    else
+        SetCurrentPedWeapon(ped, GetHashKey("WEAPON_UNARMED"), true)
+    end
+end)
+
+-- Set Ammo & Play Reload Animation
+RegisterNetEvent('mx-inv:client:setAmmoAndReload', function(weaponHashName, ammoCount)
+    local ped = PlayerPedId()
+    local hash = (type(weaponHashName) == 'string') and GetHashKey(weaponHashName) or weaponHashName
+
+    if not HasPedGotWeapon(ped, hash, false) then return end
+
+    local selectedWeapon = GetSelectedPedWeapon(ped)
+    if selectedWeapon ~= hash then
+        SetPedAmmo(ped, hash, ammoCount)
+        return
+    end
+
+    SetPedAmmo(ped, hash, ammoCount)
+    lastAmmoCache[hash] = ammoCount
+    if ammoCount > 0 then MakePedReload(ped) end
+end)
+
+-- Sync attachments on equipped weapon
+RegisterNetEvent('mx-inv:client:syncAttachments', function(weaponHashName, attachments)
+    local ped = PlayerPedId()
+    local hash = GetHashKey(weaponHashName)
+    if not HasPedGotWeapon(ped, hash, false) then return end
+
+    if attachments then
+        for slot, attachName in pairs(attachments) do
+            if attachName then
+                local attachDef = Items[attachName]
+                if attachDef and attachDef.attachment and attachDef.attachment.componentHash then
+                    local compHash = GetHashKey(attachDef.attachment.componentHash)
+                    if compHash ~= 0 then GiveWeaponComponentToPed(ped, hash, compHash) end
+                end
+            end
+        end
+    end
+end)
+
+-- Remove a specific attachment component from weapon
+RegisterNetEvent('mx-inv:client:removeAttachmentComponent', function(weaponHashName, componentHashName)
+    local ped = PlayerPedId()
+    local hash = GetHashKey(weaponHashName)
+    if not HasPedGotWeapon(ped, hash, false) then return end
+
+    local compHash = GetHashKey(componentHashName)
+    if compHash ~= 0 then RemoveWeaponComponentFromPed(ped, hash, compHash) end
+end)
+
+-- Apply drawable and screen effect for helmet accessory
+RegisterNetEvent('mx-inv:client:applyHelmetAccessory', function(payload)
+    local ped = PlayerPedId()
+    local propSlot = payload.propId or payload.componentId or 0
+    SetPedPropIndex(ped, propSlot, payload.drawableId, payload.textureId or 0, true)
+
+    local accessoryName = payload.accessoryName
+    local active = payload.visorDown == true
+
+    if accessoryName == 'nvg' then
+        SetNightvision(active)
+        SetSeethrough(false)
+    elseif accessoryName == 'thermal_monocle' then
+        SetSeethrough(active)
+        SetNightvision(false)
+    else
+        SetNightvision(false)
+        SetSeethrough(false)
+    end
+end)
