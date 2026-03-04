@@ -1,3 +1,5 @@
+import { useInventoryStore } from "../store/inventoryStore";
+
 export const validatePlacement = (
     rawContainerId: string,
     item: any,
@@ -9,17 +11,34 @@ export const validatePlacement = (
 ) => {
     const { baseId, regionOffset, pocketRegion } = parseContainerId(rawContainerId);
 
-    // -- EQUIPMENT VALIDATION: Prevent Duplicate Weapons (Frontend) --
+    // -- EQUIPMENT VALIDATION: Type Restrictions & Duplicate Weapons --
     if (baseId.startsWith('equip-')) {
         const slotId = baseId.replace('equip-', '');
+
+        // 1. Type Restriction Check
+        const state = useInventoryStore.getState();
+        const equipmentSlots = state.equipmentSlots;
+        const itemDefs = state.itemDefs;
+
+        const itemDef = itemDefs[item.name];
+        const itemType = itemDef?.type || item.type || 'generic';
+
+        const allowedTypes = equipmentSlots[slotId];
+
+        if (allowedTypes && !allowedTypes.includes(itemType)) {
+            return false;
+        }
+
+        // 2. Duplicate Weapon Check
         if (slotId === 'primary' || slotId === 'secondary') {
             const otherSlot = slotId === 'primary' ? 'secondary' : 'primary';
             const currentOther = equipment[otherSlot];
-            // If the other slot has the same weapon type, it's invalid
             if (currentOther && currentOther.name === item.name) {
                 return false;
             }
         }
+
+        return true; // EARLY RETURN: Equipment slots don't need boundary or collision checks
     }
 
     const container = containers[baseId];

@@ -51,7 +51,8 @@ function InventoryAPI.FormatPayloadContainers(containers, payload)
                 size = def.container.size,
                 items = containers[containerId],
                 weight = InventoryAPI.GetContainerWeight(containers[containerId]),
-                maxWeight = def.container.maxWeight
+                maxWeight = def.container.maxWeight,
+                layout = def.container.layout
             }
         end
     end
@@ -63,6 +64,75 @@ function InventoryAPI.FormatPayloadContainers(containers, payload)
             end
         end
     end
+end
+
+--- Resolves properties (size, maxWeight, layout) for any container ID
+function InventoryAPI.GetContainerProperties(containerId, containerMap)
+    local props = {
+        width = Config.Inventory.Slots.width,
+        height = Config.Inventory.Slots.height,
+        maxWeight = Config.Inventory.MaxWeight,
+        layout = nil
+    }
+
+    if containerId == 'player-inv' or containerId == 'player' then
+        return props
+    end
+
+    if containerId:sub(1, 6) == 'stash_' then
+        local stash = ActiveStashes[containerId]
+        if stash then
+            props.width = stash.size.width
+            props.height = stash.size.height
+            props.maxWeight = stash.maxWeight or 999.0
+            props.layout = stash.layout
+            if Config.Debug then
+                print('^3[mx-inv] GetContainerProperties: Resolved Stash ' .. containerId .. ' Layout: ' .. tostring(props.layout) .. '^0')
+            end
+            return props
+        end
+    end
+
+    -- Search for item UUID in inventory or equipment
+    local item = nil
+    local found = false
+
+    -- Search equipment first (most common for open bags)
+    if containerMap.equipment then
+        for _, eqItm in pairs(containerMap.equipment) do
+            if eqItm and eqItm.id == containerId then
+                item = eqItm
+                found = true
+                break
+            end
+        end
+    end
+
+    -- If not in equipment, search player pockets
+    if not found and containerMap.player then
+        for _, pItm in ipairs(containerMap.player) do
+            if pItm.id == containerId then
+                item = pItm
+                found = true
+                break
+            end
+        end
+    end
+
+    if found and item then
+        local def = ItemDefs[item.name]
+        if def and def.container then
+            props.width = def.container.size.width
+            props.height = def.container.size.height
+            props.maxWeight = def.container.maxWeight
+            props.layout = def.container.layout
+            if Config.Debug then
+                print('^3[mx-inv] GetContainerProperties: Resolved Item UUID ' .. containerId .. ' (' .. item.name .. ') Layout: ' .. tostring(props.layout) .. '^0')
+            end
+        end
+    end
+
+    return props
 end
 
 return InventoryAPI

@@ -94,27 +94,15 @@ local function AddItem(src, item, count, metadata, targetSlot, targetContainerId
         local tKey = (targetContainerId == 'player-inv') and 'player' or targetContainerId
         local container = Inventory[src][tKey]
         if container then
-            -- Weight Check
+            -- Resolve Properties
+            local props = InventoryAPI.GetContainerProperties(targetContainerId, Inventory[src])
             local currentWeight = InventoryAPI.GetContainerWeight(container)
-            local maxWeight = (tKey == 'player') and Config.Inventory.MaxWeight or
-                (ItemDefs[tKey] and ItemDefs[tKey].container.maxWeight) or 100.0
+            
+            if currentWeight + (itemWeight * count) <= props.maxWeight then
+                -- Use MovementEngine for robust CheckFit
+                local success, err = MovementEngine.CheckFit(container, itemSize, tonumber(targetSlot.x), tonumber(targetSlot.y), props.width, props.height, nil, props.layout)
 
-            if currentWeight + (itemWeight * count) <= maxWeight then
-                -- Check if slot is occupied (Simple overlap check)
-                local occupied = false
-                for _, invItem in ipairs(container) do
-                    -- Item dimensions (accounting for rotation)
-                    local iW = invItem.rotated and (invItem.size and invItem.size.y or 1) or (invItem.size and invItem.size.x or 1)
-                    local iH = invItem.rotated and (invItem.size and invItem.size.x or 1) or (invItem.size and invItem.size.y or 1)
-                    
-                    if targetSlot.x < invItem.slot.x + iW and targetSlot.x + itemSize.x > invItem.slot.x and
-                        targetSlot.y < invItem.slot.y + iH and targetSlot.y + itemSize.y > invItem.slot.y then
-                        occupied = true
-                        break
-                    end
-                end
-
-                if not occupied then
+                if success then
                     local newItem = {
                         name = item,
                         count = count,
@@ -126,6 +114,8 @@ local function AddItem(src, item, count, metadata, targetSlot, targetContainerId
                     table.insert(container, newItem)
                     print('^2[mx-inv] AddItem: Placed ' .. item .. ' into ' .. targetContainerId .. ' at ' .. targetSlot.x .. ',' .. targetSlot.y .. '^0')
                     return true, "Adicionado no slot específico"
+                else
+                    print('^1[mx-inv] AddItem Failed: ' .. (err or "Invalid slot") .. '^0')
                 end
             end
         end
@@ -206,10 +196,9 @@ local function AddItem(src, item, count, metadata, targetSlot, targetContainerId
                     container = Inventory[src][cInfo.key]
                 end
 
-                -- Weight Check
                 local currentWeight = InventoryAPI.GetContainerWeight(container)
                 if currentWeight + itemWeight <= cInfo.maxW then
-                    local slotData = MovementEngine.FindFreeSlot(container, itemSize, cInfo.w, cInfo.h)
+                    local slotData = MovementEngine.FindFreeSlot(container, itemSize, cInfo.w, cInfo.h, cInfo.layout)
                     if slotData then
                         foundSlot = slotData
                         targetContainerKey = cInfo.key
@@ -224,16 +213,14 @@ local function AddItem(src, item, count, metadata, targetSlot, targetContainerId
             end
 
             local amount = math.min(count, maxStack)
-            local finalSize = { x = itemSize.x, y = itemSize.y }
-            if foundSlot.rotated then
-                finalSize = { x = itemSize.y, y = itemSize.x }
-            end
+            -- CRITICAL: Persist the BASE size (unrotated). The logic will rotate it based on the flag.
+            local baseSizeToSave = { x = itemSize.x, y = itemSize.y }
 
             local newItem = {
                 name = item,
                 count = amount,
                 slot = { x = foundSlot.x, y = foundSlot.y },
-                size = finalSize, -- Persist the size (rotated or normal)
+                size = baseSizeToSave,
                 rotated = foundSlot.rotated,
                 id = InventoryAPI.GenerateUUID(),
                 metadata = (amount == count) and metadata or nil
@@ -262,11 +249,13 @@ local function AutoEquipItem(src, item, count, metadata)
     local equipment = Inventory[src].equipment
     if not equipment then return false end
 
-    -- Define priority slots for each type
-    local slotMap = {
-        weapon_pistol = { 'primary', 'secondary' },
+    -- Define priority slots for each type (Fallback for AutoEquip)
+    local slotPriority = {
+        weapon_pistol = { 'pistol', 'primary', 'secondary' },
         weapon_rifle = { 'primary', 'secondary' },
         weapon_shotgun = { 'primary', 'secondary' },
+        weapon_smg = { 'primary', 'secondary' },
+        weapon_sniper = { 'primary', 'secondary' },
         weapon_melee = { 'melee' },
         helmet = { 'head' },
         armor = { 'body' },
@@ -274,7 +263,7 @@ local function AutoEquipItem(src, item, count, metadata)
         backpack = { 'backpack' }
     }
 
-    local possibleSlots = slotMap[def.type]
+    local possibleSlots = slotPriority[def.type or itemObj.type]
     if not possibleSlots then return false end
 
     for _, slot in ipairs(possibleSlots) do
@@ -310,6 +299,33 @@ local function AutoEquipItem(src, item, count, metadata)
     return false
 end
 
+local function SanitizeInventory(inv)
+    if not inv then return end
+    local function sanitizeList(list)
+        if not list then return end
+        for _, item in pairs(list) do
+            if item and item.name then
+                local def = ItemDefs[item.name]
+                if def then
+                    -- Force correct base size from definition
+                    item.size = { x = def.size.x, y = def.size.y }
+                end
+            end
+        end
+    end
+
+    sanitizeList(inv.player)
+    if inv.equipment then
+        sanitizeList(inv.equipment)
+    end
+    -- Sanitizing secondary containers
+    for k, v in pairs(inv) do
+        if k ~= 'player' and k ~= 'equipment' and type(v) == 'table' then
+            sanitizeList(v)
+        end
+    end
+end
+
 -- Deprecated: Manual reload system removed. GTA Native handles reloads.
 local function LoadPlayer(src)
     local player = MX_GetPlayer(src)
@@ -330,10 +346,12 @@ local function LoadPlayer(src)
             Inventory[src] = dbData
             print('^3[mx-inv] Loaded DB data (Object format).^0')
         else
-            -- Old Format (Array)
             Inventory[src].player = dbData
             print('^3[mx-inv] Loaded DB data (Array format).^0')
         end
+
+        -- Call Sanitizer to fix any "dirty" sizes from previous bugs
+        SanitizeInventory(Inventory[src])
 
         -- Initialize/Sanitize Secondary Containers
         -- Removed hardcoded initialization for dynamic system
@@ -385,7 +403,7 @@ local function LoadPlayer(src)
             if headItem and headItem.metadata and headItem.metadata.accessories then
                 for accSlot, accData in pairs(headItem.metadata.accessories) do
                     if accData and accData.name then
-                        SyncHelmetAccessory(src, headItem.name, accSlot, accData.name, headItem.metadata.visorDown)
+                        EquipmentAPI.SyncHelmetAccessory(src, headItem.name, accSlot, accData.name, headItem.metadata.visorDown)
                     end
                 end
             end
@@ -448,7 +466,7 @@ RegisterNetEvent('mx-inv:server:requestEquipment', function()
     if headItem and headItem.metadata and headItem.metadata.accessories then
         for accSlot, accData in pairs(headItem.metadata.accessories) do
             if accData and accData.name then
-                SyncHelmetAccessory(src, headItem.name, accSlot, accData.name, headItem.metadata.visorDown)
+                EquipmentAPI.SyncHelmetAccessory(src, headItem.name, accSlot, accData.name, headItem.metadata.visorDown)
             end
         end
     end
@@ -1043,6 +1061,33 @@ RegisterNetEvent('mx-inv:server:moveItem', function(data)
         -- Target is Equipment Slot
         print('^3[mx-inv] Debug Move: Target is EQUIPMENT key: ' .. toEquipKey .. '^0')
 
+        -- VALIDATION: Check Slot Compatibility
+        local itemDef = ItemDefs[itemObj.name]
+        local itemType = (itemDef and itemDef.type) or itemObj.type or 'generic'
+        local allowedTypes = Config.EquipmentSlots[toEquipKey]
+        local isAllowed = false
+
+        if allowedTypes then
+            print('^3[mx-inv] Validation: checking compatibility for ' .. itemObj.name .. ' (type: ' .. tostring(itemType) .. ') against allowed: ' .. json.encode(allowedTypes) .. '^0')
+            for _, allowedType in ipairs(allowedTypes) do
+                if itemType == allowedType then
+                    isAllowed = true
+                    break
+                end
+            end
+        else
+            print('^3[mx-inv] Validation Warning: No restrictions defined for slot ' .. toEquipKey .. '. Fallback to ALLOW.^0')
+            isAllowed = true -- If not defined, allow everything (fallback)
+        end
+
+        if not isAllowed then
+            print('^1[mx-inv] Validation CRITICAL: Blocked item ' ..
+                itemObj.name .. ' (type: ' .. tostring(itemType) .. ') in slot ' .. toEquipKey .. '^0')
+            TriggerClientEvent('mx-inv:client:notify', src, "Este item não pode ser equipado neste slot!", "error")
+            UpdateClientInventory(src)
+            return -- STOP EXECUTION HERE
+        end
+
         -- VALIDATION: Prevent Duplicate Weapons in Primary/Secondary
         if toEquipKey == 'primary' or toEquipKey == 'secondary' then
             local otherSlot = (toEquipKey == 'primary') and 'secondary' or 'primary'
@@ -1057,86 +1102,47 @@ RegisterNetEvent('mx-inv:server:moveItem', function(data)
         end
 
         if toContainer[toEquipKey] then
-            print('^3[mx-inv] Warning: Equipment slot ' .. toEquipKey .. ' occupied. Overwriting.^0')
+            local existingItem = toContainer[toEquipKey]
+            print('^3[mx-inv] Equipment replacement: moving existing ' .. existingItem.name .. ' to source container ^0')
+            
+            -- Move existing item to where the new one was
+            existingItem.slot = { x = itemObj.slot.x, y = itemObj.slot.y }
+            existingItem.isEquipment = false
+            table.insert(fromContainer, existingItem)
         end
     else
         -- Target is Standard Array
         
         -- Determine incoming item size (respecting its current or requested rotation/fold)
-        local fallbackSize = itemObj.size or (ItemDefs[itemObj.name] and ItemDefs[itemObj.name].size) or { x = 1, y = 1 }
-        local testSize = { x = fallbackSize.x, y = fallbackSize.y }
+        local def = ItemDefs[itemObj.name]
+        local baseSize = (def and def.size) or itemObj.size or { x = 1, y = 1 }
+        local currentFold = (data.folded ~= nil) and data.folded or itemObj.folded
+        if currentFold and def and def.foldedSize then
+            baseSize = def.foldedSize
+        end
+
+        local testSize = { x = baseSize.x, y = baseSize.y }
         if data.rotated then
-            testSize = { x = fallbackSize.y, y = fallbackSize.x }
+            testSize = { x = baseSize.y, y = baseSize.x }
         end
-        if data.folded ~= nil then
-            local def = ItemDefs[itemObj.name]
-            if data.folded and def and def.foldedSize then
-                testSize = def.foldedSize
-                if data.rotated then testSize = { x = testSize.y, y = testSize.x } end
-            end
-        end
-        local itemWeight = (ItemDefs[itemObj.name] and ItemDefs[itemObj.name].weight) or 0.0
+        local itemWeight = (def and def.weight) or 0.0
 
         if targetSlot and targetSlot.x and targetSlot.y then
             -- SPECIFIC SLOT REQUEST (Drag & Drop)
-            local gridWidth = Config.Inventory.Slots.width
-            local gridHeight = Config.Inventory.Slots.height
-            local toMaxWeight = 9999.0
-
-            if toId == 'player-inv' or toId == 'player' then
-                toMaxWeight = Config.Inventory.MaxWeight
-            elseif toId:sub(1, 6) == 'equip-' then
-                local eqObj = containerMap.equipment[toId:sub(7)]
-                if eqObj and ItemDefs[eqObj.name] and ItemDefs[eqObj.name].container then
-                    gridWidth = ItemDefs[eqObj.name].container.size.width
-                    gridHeight = ItemDefs[eqObj.name].container.size.height
-                    toMaxWeight = ItemDefs[eqObj.name].container.maxWeight
-                end
-            elseif toId:sub(1, 6) == 'stash_' then
-                local stash = ActiveStashes[toId]
-                if stash then
-                    gridWidth = stash.size.width
-                    gridHeight = stash.size.height
-                    toMaxWeight = stash.maxWeight or 999.0
-                end
-            else
-                local targetFound = false
-                -- Search in player pockets
-                for _, pItm in ipairs(containerMap.player or {}) do
-                    if pItm.id == toId then
-                        local pDef = ItemDefs[pItm.name]
-                        if pDef and pDef.container then
-                            gridWidth = pDef.container.size.width
-                            gridHeight = pDef.container.size.height
-                            toMaxWeight = pDef.container.maxWeight
-                        end
-                        targetFound = true
-                        break
-                    end
-                end
-                
-                -- If not found, search in equipment items
-                if not targetFound and containerMap.equipment then
-                    for _, eqItm in pairs(containerMap.equipment) do
-                        if eqItm and eqItm.id == toId then
-                            local eqDef = ItemDefs[eqItm.name]
-                            if eqDef and eqDef.container then
-                                gridWidth = eqDef.container.size.width
-                                gridHeight = eqDef.container.size.height
-                                toMaxWeight = eqDef.container.maxWeight
-                            end
-                            targetFound = true
-                            break
-                        end
-                    end
-                end
-            end
+            local targetProps = InventoryAPI.GetContainerProperties(toId, containerMap)
+            local gridWidth = targetProps.width
+            local gridHeight = targetProps.height
+            local toMaxWeight = targetProps.maxWeight
+            local toLayout = targetProps.layout
 
             local currentToWeight = InventoryAPI.GetContainerWeight(toContainer)
+            if Config.Debug then
+                print('^3[mx-inv] moveItem DND: target=' .. toId .. ' resolved layout=' .. tostring(toLayout) .. '^0')
+            end
             print('^3[mx-inv] Validation DND: target=' .. toId .. ' weight=' .. currentToWeight .. '/' .. toMaxWeight .. ' grid=' .. gridWidth .. 'x' .. gridHeight .. '^0')
 
             -- STRICT VALIDATION: Check Fit
-            local success, err = MovementEngine.CheckFit(toContainer, testSize, tonumber(targetSlot.x), tonumber(targetSlot.y), gridWidth, gridHeight, itemObj.id)
+            local success, err = MovementEngine.CheckFit(toContainer, testSize, tonumber(targetSlot.x), tonumber(targetSlot.y), gridWidth, gridHeight, itemObj.id, toLayout)
             
             -- SMART FALLBACK: If dragging to 'player-inv' and it doesn't fit or is too heavy, try finding ANY slot in any bag
             if not success or (currentToWeight + itemWeight > toMaxWeight) then
@@ -1154,28 +1160,33 @@ RegisterNetEvent('mx-inv:server:moveItem', function(data)
                                     key = eqItem.id,
                                     w = eqDef.container.size.width,
                                     h = eqDef.container.size.height,
-                                    maxW = eqDef.container.maxWeight
+                                    maxW = eqDef.container.maxWeight,
+                                    layout = eqDef.container.layout
                                 })
                             end
                         end
                     end
 
                     for _, cInfo in ipairs(containerOrder) do
-                        local tgtContainer = containerMap[cInfo.key] or {}
-                        containerMap[cInfo.key] = tgtContainer -- Ensure it exists in main map
-                        
-                        local currentWeight = InventoryAPI.GetContainerWeight(tgtContainer)
-                        if currentWeight + itemWeight <= cInfo.maxW then
-                            freeSlot = MovementEngine.FindFreeSlot(tgtContainer, testSize, cInfo.w, cInfo.h)
-                            if freeSlot then
-                                toContainer = tgtContainer
-                                finalTargetContainerId = cInfo.key
-                                targetSlot = { x = freeSlot.x, y = freeSlot.y }
-                                data.rotated = freeSlot.rotated
-                                toId = finalTargetContainerId
-                                success = true
-                                print('^2[mx-inv] Smart Fallback Success: Found slot in bag ' .. toId .. '^0')
-                                break
+                        if cInfo.key == itemObj.id then
+                            print('^3[mx-inv] Skipping ' .. cInfo.key .. ' (recursion check in fallback)^0')
+                        else
+                            local tgtContainer = containerMap[cInfo.key] or {}
+                            containerMap[cInfo.key] = tgtContainer -- Ensure it exists in main map
+                            
+                            local currentWeight = InventoryAPI.GetContainerWeight(tgtContainer)
+                            if currentWeight + itemWeight <= cInfo.maxW then
+                                freeSlot = MovementEngine.FindFreeSlot(tgtContainer, testSize, cInfo.w, cInfo.h, cInfo.layout)
+                                if freeSlot then
+                                    toContainer = tgtContainer
+                                    finalTargetContainerId = cInfo.key
+                                    targetSlot = { x = freeSlot.x, y = freeSlot.y }
+                                    data.rotated = freeSlot.rotated
+                                    toId = finalTargetContainerId
+                                    success = true
+                                    print('^2[mx-inv] Smart Fallback Success: Found slot in bag ' .. toId .. '^0')
+                                    break
+                                end
                             end
                         end
                     end
@@ -1204,95 +1215,85 @@ RegisterNetEvent('mx-inv:server:moveItem', function(data)
 
             -- If targeting 'player-inv' implicitly without coordinates, fallback to ALL containers
             if toId == 'player-inv' or toId == 'player' then
-                local containerOrder = {
-                    { key = 'player', w = Config.Inventory.Slots.width, h = Config.Inventory.Slots.height, maxW = Config.Inventory.MaxWeight }
-                }
+                -- PRIORITY: RIG (Vest) -> BAG (Backpack) -> PLAYER POCKETS
+                local containerOrder = {}
+                
+                -- 1. Identify Rigs and Bags from equipment
+                local rigContainer = nil
+                local bagContainer = nil
+                
                 if containerMap.equipment then
                     for slot, eqItem in pairs(containerMap.equipment) do
                         local eqDef = ItemDefs[eqItem.name]
                         if eqDef and eqDef.container then
-                            table.insert(containerOrder, {
+                            local cInfo = {
                                 key = eqItem.id,
+                                slot = slot, -- used for priority
                                 w = eqDef.container.size.width,
                                 h = eqDef.container.size.height,
-                                maxW = eqDef.container.maxWeight
-                            })
+                                maxW = eqDef.container.maxWeight,
+                                layout = eqDef.container.layout
+                            }
+                            if slot == 'vest' then
+                                rigContainer = cInfo
+                            elseif slot == 'backpack' then
+                                bagContainer = cInfo
+                            else
+                                -- Other containers (maybe pockets if they were containers)
+                                table.insert(containerOrder, cInfo)
+                            end
                         end
                     end
                 end
 
-                for _, cInfo in ipairs(containerOrder) do
-                    local tgtContainer = containerMap[cInfo.key] or {}
-                    containerMap[cInfo.key] = tgtContainer
+                -- Assemble the priority list
+                local sortedContainers = {}
+                -- 1. Player pockets come FIRST
+                table.insert(sortedContainers, { 
+                    key = 'player', 
+                    w = Config.Inventory.Slots.width, 
+                    h = Config.Inventory.Slots.height, 
+                    maxW = Config.Inventory.MaxWeight 
+                })
+                -- 2. RIG (Vest) comes second
+                if rigContainer then table.insert(sortedContainers, rigContainer) end
+                -- 3. BAG (Backpack) comes third
+                if bagContainer then table.insert(sortedContainers, bagContainer) end
+                -- 4. Any others
+                for _, other in ipairs(containerOrder) do table.insert(sortedContainers, other) end
+
+                for _, cInfo in ipairs(sortedContainers) do
+                    -- RECURSION CHECK: Don't put a container inside itself!
+                    if cInfo.key == itemObj.id then
+                        print('^3[mx-inv] Skipping ' .. cInfo.key .. ' (recursion check)^0')
+                    else
+                        local tgtContainer = containerMap[cInfo.key] or {}
+                        containerMap[cInfo.key] = tgtContainer
                     
                     local currentWeight = InventoryAPI.GetContainerWeight(tgtContainer)
-                    print('^3[mx-inv] Checking auto-find slot in ' .. cInfo.key .. ' Weight: ' .. currentWeight .. '/' .. cInfo.maxW .. '^0')
+                    print('^3[mx-inv] Checking auto-find slot for ' .. itemObj.name .. ' (' .. testSize.x .. 'x' .. testSize.y .. ') in ' .. cInfo.key .. ' Weight: ' .. currentWeight .. '/' .. cInfo.maxW .. '^0')
                     
                     if currentWeight + itemWeight <= cInfo.maxW then
-                        freeSlot = MovementEngine.FindFreeSlot(tgtContainer, testSize, cInfo.w, cInfo.h)
+                        freeSlot = MovementEngine.FindFreeSlot(tgtContainer, testSize, cInfo.w, cInfo.h, cInfo.layout)
                         if freeSlot then
                             toContainer = tgtContainer
                             finalTargetContainerId = cInfo.key
                             print('^2[mx-inv] Auto-found slot in ' .. cInfo.key .. '^0')
                             break
                         end
-                    else
-                        print('^3[mx-inv] Skipping ' .. cInfo.key .. ' (too heavy)^0')
                     end
                 end
+            end
             else
                 -- Auto-find in a specific non-player container (e.g. stash or specific bag)
-                local gridWidth = Config.Inventory.Slots.width
-                local gridHeight = Config.Inventory.Slots.height
-                local toMaxWeight = 9999.0
-
-                if toId:sub(1, 6) == 'equip-' then
-                    local eqObj = containerMap.equipment[toId:sub(7)]
-                    if eqObj and ItemDefs[eqObj.name] and ItemDefs[eqObj.name].container then
-                        gridWidth = ItemDefs[eqObj.name].container.size.width
-                        gridHeight = ItemDefs[eqObj.name].container.size.height
-                        toMaxWeight = ItemDefs[eqObj.name].container.maxWeight
-                    end
-                elseif toId:sub(1, 6) == 'stash_' then
-                    local stash = ActiveStashes[toId]
-                    if stash then
-                        gridWidth = stash.size.width
-                        gridHeight = stash.size.height
-                        toMaxWeight = stash.maxWeight or 999.0
-                    end
-                else
-                    local targetFound = false
-                    for _, pItm in ipairs(containerMap.player or {}) do
-                        if pItm.id == toId then
-                            local pDef = ItemDefs[pItm.name]
-                            if pDef and pDef.container then
-                                gridWidth = pDef.container.size.width
-                                gridHeight = pDef.container.size.height
-                                toMaxWeight = pDef.container.maxWeight
-                            end
-                            targetFound = true
-                            break
-                        end
-                    end
-                    
-                    if not targetFound and containerMap.equipment then
-                        for _, eqItm in pairs(containerMap.equipment) do
-                            if eqItm and eqItm.id == toId then
-                                local eqDef = ItemDefs[eqItm.name]
-                                if eqDef and eqDef.container then
-                                    gridWidth = eqDef.container.size.width
-                                    gridHeight = eqDef.container.size.height
-                                    toMaxWeight = eqDef.container.maxWeight
-                                end
-                                targetFound = true
-                                break
-                            end
-                        end
-                    end
-                end
+                local targetProps = InventoryAPI.GetContainerProperties(toId, containerMap)
+                local gridWidth = targetProps.width
+                local gridHeight = targetProps.height
+                local toMaxWeight = targetProps.maxWeight
+                local specificLayout = targetProps.layout
 
                 if InventoryAPI.GetContainerWeight(toContainer) + itemWeight <= toMaxWeight then
-                    freeSlot = MovementEngine.FindFreeSlot(toContainer, testSize, gridWidth, gridHeight)
+                    freeSlot = MovementEngine.FindFreeSlot(toContainer, testSize, gridWidth, gridHeight, specificLayout)
                 else
                     TriggerClientEvent('mx-inv:client:notify', src, "O compartimento de destino não aguenta esse peso!", "error")
                     UpdateClientInventory(src)
@@ -1335,13 +1336,20 @@ RegisterNetEvent('mx-inv:server:moveItem', function(data)
         toContainer[toEquipKey] = itemObj
         local ammoToLoad = tonumber(itemObj.metadata and itemObj.metadata.ammo) or 0
         local attachments = itemObj.metadata and itemObj.metadata.attachments or nil
-        TriggerClientEvent('mx-inv:client:updateEquipment', src, itemName, true, ammoToLoad, attachments)
+        local accessories = itemObj.metadata and itemObj.metadata.accessories or nil
+        local visorDown = itemObj.metadata and itemObj.metadata.visorDown or false
+        TriggerClientEvent('mx-inv:client:updateEquipment', src, itemName, true, ammoToLoad, attachments, accessories, visorDown)
         print('^2[mx-inv] Equipped ' .. itemName .. ' to ' .. toEquipKey .. '^0')
         -- Log the new state of equipment
         print('^3[mx-inv] New Equipment State: ' .. json.encode(containerMap.equipment) .. '^0')
     else
         itemObj.slot = targetSlot
         itemObj.rotated = data.rotated   -- Save rotation state
+        -- CRITICAL: Always persist BASE size (unrotated definition)
+        local baseDef = ItemDefs[itemObj.name]
+        if baseDef then
+            itemObj.size = { x = baseDef.size.x, y = baseDef.size.y }
+        end
         if data.folded ~= nil then
             itemObj.folded = data.folded -- Save folded state
         end

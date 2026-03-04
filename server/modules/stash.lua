@@ -10,7 +10,7 @@ StashAPI.ActiveStashes = {}
 StashAPI.PlayerOpenStash = {}
 
 --- Register a stash with pre-generated items (does NOT open it)
-function StashAPI.RegisterStash(stashId, label, size, items)
+function StashAPI.RegisterStash(stashId, label, size, items, layout)
     if not stashId or not label or not size then
         print('^1[mx-inv] RegisterStash: Invalid parameters^0')
         return false
@@ -19,7 +19,8 @@ function StashAPI.RegisterStash(stashId, label, size, items)
     StashAPI.ActiveStashes[stashId] = {
         items = items or {},
         size = size,
-        label = label
+        label = label,
+        layout = layout
     }
 
     print('^2[mx-inv] Registered stash: ' .. stashId .. ' (' .. #(items or {}) .. ' items)^0')
@@ -27,7 +28,7 @@ function StashAPI.RegisterStash(stashId, label, size, items)
 end
 
 --- Open a stash for a player (sends combined inventory + stash payload)
-function StashAPI.OpenStashForPlayer(src, stashId, label, size, getFormattedInventoryFunc)
+function StashAPI.OpenStashForPlayer(src, stashId, label, size, getFormattedInventoryFunc, layout)
     if not src or not stashId then return end
 
     local Inventory = InventoryAPI.GetPlayerInventory(src)
@@ -45,7 +46,8 @@ function StashAPI.OpenStashForPlayer(src, stashId, label, size, getFormattedInve
         StashAPI.ActiveStashes[stashId] = {
             items = dbItems or {},
             size = size or { width = 4, height = 3 },
-            label = label or 'Stash'
+            label = label or 'Stash',
+            layout = layout
         }
     end
 

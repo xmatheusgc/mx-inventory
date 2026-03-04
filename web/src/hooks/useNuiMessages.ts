@@ -11,6 +11,7 @@ export function useNuiMessages() {
         addNotification,
         setGiveTarget,
         setItemDefs,
+        setEquipmentSlots,
         itemDefs: storeDefs,
     } = useInventoryStore();
 
@@ -92,6 +93,10 @@ export function useNuiMessages() {
             }
 
             if (action === 'open') {
+                const { config } = event.data;
+                if (config?.equipmentSlots) {
+                    setEquipmentSlots(config.equipmentSlots);
+                }
                 setOpen(true);
             }
 

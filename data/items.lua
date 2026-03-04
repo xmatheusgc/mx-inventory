@@ -59,6 +59,7 @@ Items = {
             supportedAttachments = {
                 muzzle = { label = "Muzzle", componentHash = "COMPONENT_AT_PI_SUPP_02" },
                 scope  = { label = "Scope", componentHash = "" },
+                flashlight = { label = "Flashlight", componentHash = "COMPONENT_AT_PI_FLSH" },
             }
         }
     },
@@ -79,6 +80,7 @@ Items = {
                 muzzle = { label = "Muzzle", componentHash = "COMPONENT_AT_AR_SUPP_02" },
                 scope  = { label = "Scope", componentHash = "COMPONENT_AT_SCOPE_MACRO_02" },
                 grip   = { label = "Grip", componentHash = "COMPONENT_AT_AR_AFGRIP" },
+                flashlight = { label = "Flashlight", componentHash = "COMPONENT_AT_AR_FLSH" },
                 skin   = { label = "Skin", componentHash = "" },
             }
         }
@@ -98,6 +100,7 @@ Items = {
             defaultMagCapacity = 8,
             supportedAttachments = {
                 muzzle = { label = "Muzzle", componentHash = "COMPONENT_AT_SR_SUPP" },
+                flashlight = { label = "Flashlight", componentHash = "COMPONENT_AT_AR_FLSH" },
             }
         }
     },
@@ -187,8 +190,8 @@ Items = {
         type = "attachment_scope",
         image = "flashlight.png",
         attachment = {
-            slot = "scope",
-            componentHash = "COMPONENT_AT_PI_FLSH",
+            slot = "flashlight",
+            componentHash = "", -- Unified system will resolve from weapon
         }
     },
     ['scope_holo'] = {
@@ -295,7 +298,8 @@ Items = {
         },
         container    = {
             size = { width = 4, height = 10 },
-            maxWeight = 10.0
+            maxWeight = 10.0,
+            layout = 'rig_st_tipo_4'
         }
     },
     ['mochila_tatica_expansivel_luc'] = {
@@ -313,7 +317,8 @@ Items = {
         },
         container    = {
             size = { width = 5, height = 10 },
-            maxWeight = 20.0
+            maxWeight = 20.0,
+            layout = 'mochila_tatica_expansivel_luc'
         }
     }
 }

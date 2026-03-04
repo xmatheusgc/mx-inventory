@@ -131,12 +131,18 @@ interface InventoryState {
     // Item Definitions
     itemDefs: Record<string, any>;
     setItemDefs: (defs: Record<string, any>) => void;
+
+    // Config
+    equipmentSlots: Record<string, string[]>;
+    setEquipmentSlots: (slots: Record<string, string[]>) => void;
 }
 
 // No helpers needed currently
 
 export const useInventoryStore = create<InventoryState>((set) => ({
     isOpen: false,
+    equipmentSlots: {},
+    setEquipmentSlots: (slots) => set({ equipmentSlots: slots }),
     containers: {
         'player-inv': {
             id: 'player-inv',
@@ -411,12 +417,23 @@ export const useInventoryStore = create<InventoryState>((set) => ({
         const sourceContainer = state.containers[fromContainerId];
         if (!sourceContainer) return state;
 
-        // Remove from source
-        const newSourceItems = sourceContainer.items.filter((i: Item) => i.id !== item.id);
+        const existingItem = state.equipment[slot];
+
+        // Remove incoming item from source
+        let newSourceItems = sourceContainer.items.filter((i: Item) => i.id !== item.id);
+
+        if (existingItem) {
+            // Replacement Logic: Put the OLD item where the NEW one was
+            const oldItemAtNewCoords = {
+                ...existingItem,
+                slot: item.slot,
+                isEquipment: false
+            };
+            newSourceItems.push(oldItemAtNewCoords);
+        }
 
         // Add to equipment (Reset Folded - Ensure Expanded)
-        // We need expanded size here.
-        let newItem = { ...item, folded: false };
+        let newItem = { ...item, folded: false, isEquipment: true };
         const config = ITEM_CONFIGS[item.name];
         if (config) {
             newItem.size = config.expandedSize;

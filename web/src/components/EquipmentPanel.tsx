@@ -52,7 +52,7 @@ export const EquipmentPanel: React.FC = () => {
                 {/* Sidearm & Melee (Stacked Vertically) */}
                 <div className="flex flex-col gap-2 bg-black/60 p-1">
                     <div className='bg-black/40'>
-                        <EquipmentSlot slotId="pistol" label="Holster" className="w-30 h-30" acceptedTypes={['weapon_pistol']} />
+                        <EquipmentSlot slotId="holster" label="Holster" className="w-30 h-30" acceptedTypes={['weapon_pistol']} />
                     </div>
                     <div className='bg-black/40'>
                         <EquipmentSlot slotId="melee" label="Melee" className="w-30 h-30" acceptedTypes={['weapon_melee']} />

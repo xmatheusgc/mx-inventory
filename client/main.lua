@@ -111,7 +111,10 @@ RegisterNetEvent('mx-inv:client:openInventory', function(data)
     SetNuiFocus(true, true)
     SendNUIMessage({
         action = 'open',
-        data = data
+        data = data,
+        config = {
+            equipmentSlots = Config.EquipmentSlots
+        }
     })
 
     local hasStash = false
@@ -525,7 +528,9 @@ RegisterNetEvent('mx-inv:client:playerLoaded', function(equipment)
             if item and item.name then
                 local ammoToLoad = tonumber(item.metadata and item.metadata.ammo) or 0
                 local attachments = item.metadata and item.metadata.attachments or nil
-                TriggerEvent('mx-inv:client:updateEquipment', item.name, true, ammoToLoad, attachments)
+                local accessories = item.metadata and item.metadata.accessories or nil
+                local visorDown = item.metadata and item.metadata.visorDown or false
+                TriggerEvent('mx-inv:client:updateEquipment', item.name, true, ammoToLoad, attachments, accessories, visorDown)
             end
         end
     end

@@ -80,17 +80,20 @@ export function useKeyboardShortcuts({
                             });
                         } else {
                             let targetSlot = '';
-                            const type = hovered.item.type;
+                            const state = useInventoryStore.getState();
+                            const itemDef = state.itemDefs[hovered.item.name];
+                            const type = itemDef?.type || hovered.item.type;
+
                             if (type === 'helmet') targetSlot = 'head';
                             else if (type === 'mask') targetSlot = 'face';
                             else if (type === 'armor') targetSlot = 'armor';
                             else if (type === 'earpiece') targetSlot = 'earpiece';
                             else if (type === 'vest') targetSlot = 'vest';
                             else if (type === 'backpack') targetSlot = 'backpack';
-                            else if (type === 'weapon_pistol') targetSlot = 'pistol';
+                            else if (type === 'weapon_pistol') targetSlot = 'holster';
                             else if (type === 'weapon_melee') targetSlot = 'melee';
                             else if (type?.startsWith('weapon_')) {
-                                const eq = useInventoryStore.getState().equipment;
+                                const eq = state.equipment;
                                 if (!eq.primary) targetSlot = 'primary';
                                 else if (!eq.secondary) targetSlot = 'secondary';
                                 else targetSlot = 'primary';

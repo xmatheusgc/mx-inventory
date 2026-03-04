@@ -287,22 +287,14 @@ export function useDndHandlers({
                 }
             }
 
-            // Equipment-compatible items
-            if (item.type && !item.type.startsWith('attachment_') && item.type !== 'ammo') {
-                const equipSlotMap: Record<string, string[]> = {
-                    primary: ['weapon_primary', 'weapon_secondary', 'weapon_smg', 'weapon_rifle', 'weapon_sniper', 'weapon_shotgun'],
-                    secondary: ['weapon_primary', 'weapon_secondary', 'weapon_smg', 'weapon_rifle', 'weapon_sniper', 'weapon_shotgun'],
-                    pistol: ['weapon_pistol'],
-                    melee: ['weapon_melee'],
-                    head: ['helmet'],
-                    face: ['mask'],
-                    armor: ['armor'],
-                    earpiece: ['earpiece'],
-                    vest: ['vest'],
-                    bag: ['backpack', 'bag'],
-                };
+            if (item.type || true) { // Always check type
+                const state = useInventoryStore.getState();
+                const itemDef = state.itemDefs[item.name];
+                const itemType = itemDef?.type || item.type || 'generic';
+                const equipSlotMap = state.equipmentSlots;
+
                 for (const [slot, accepted] of Object.entries(equipSlotMap)) {
-                    if (accepted.includes(item.type) && !equipment[slot]) {
+                    if (accepted.includes(itemType) && !equipment[slot]) {
                         compatibleIds.add(`equip-${slot}`);
                         dragType = dragType || 'stack';
                     }
@@ -661,13 +653,31 @@ export function useDndHandlers({
 
         if (isEquipping) {
             const targetSlotName = toId.replace('equip-', '');
+
+            // PRE-EMPTIVE VALIDATION: Don't even hit the store if type is mismatched
+            const isValid = validatePlacement(toId, item, { x: 1, y: 1 }, finalRotation, containers, equipment, parseContainerId);
+            if (!isValid) return;
+
             const existingEquip = equipment[targetSlotName];
 
             if (existingEquip) {
-                if (existingEquip.id !== item.id) {
+                // SWAP LOGIC: If it's already an equipment slot, swap them. 
+                // IF it's coming from a container, we use equipItem which will now handle the replacement.
+                if (fromContainerId.startsWith('equip-')) {
                     const fromEquipSlot = fromContainerId.replace('equip-', '');
-                    swapEquipment(fromEquipSlot, targetSlotName);
-                    fetchNui('swapEquipment', {
+                    if (existingEquip.id !== item.id) {
+                        swapEquipment(fromEquipSlot, targetSlotName);
+                        fetchNui('swapEquipment', {
+                            item: item.name,
+                            id: item.id,
+                            from: fromContainerId,
+                            slot: targetSlotName
+                        });
+                    }
+                } else {
+                    // Item from container to occupied equip slot
+                    equipItem(targetSlotName, item, fromContainerId);
+                    fetchNui('equipItem', {
                         item: item.name,
                         id: item.id,
                         from: fromContainerId,

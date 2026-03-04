@@ -35,7 +35,7 @@ RegisterNetEvent('mx-inv:client:playAnim', function(data)
 end)
 
 -- Update Equipment Visuals (Give weapon, apply clothing, apply attachments)
-RegisterNetEvent('mx-inv:client:updateEquipment', function(itemName, isEquipping, ammoToLoad, attachments)
+RegisterNetEvent('mx-inv:client:updateEquipment', function(itemName, isEquipping, ammoToLoad, attachments, accessories, visorDown)
     local ped = PlayerPedId()
     local def = Items and Items[itemName]
     if not def or not def.equipment then return end
@@ -52,9 +52,16 @@ RegisterNetEvent('mx-inv:client:updateEquipment', function(itemName, isEquipping
                 for slot, attachName in pairs(attachments) do
                     if attachName then
                         local attachDef = Items[attachName]
-                        if attachDef and attachDef.attachment and attachDef.attachment.componentHash then
-                            local compHash = GetHashKey(attachDef.attachment.componentHash)
-                            if compHash ~= 0 then GiveWeaponComponentToPed(ped, hash, compHash) end
+                        if attachDef and attachDef.attachment then
+                            -- INTELLIGENT LOOKUP:
+                            -- 1. Check if the weapon DEFINES a specific hash for this slot (e.g. Flashlight on Rifle vs Pistol)
+                            -- 2. Fallback to the attachment's own default hash
+                            local compHashStr = (eq.supportedAttachments and eq.supportedAttachments[slot] and eq.supportedAttachments[slot].componentHash) or attachDef.attachment.componentHash
+                            
+                            if compHashStr and compHashStr ~= "" then
+                                local compHash = GetHashKey(compHashStr)
+                                if compHash ~= 0 then GiveWeaponComponentToPed(ped, hash, compHash) end
+                            end
                         end
                     end
                 end
@@ -67,9 +74,35 @@ RegisterNetEvent('mx-inv:client:updateEquipment', function(itemName, isEquipping
     -- Clothing / Prop Logic
     if eq.propId ~= nil and eq.drawableId then
         if isEquipping then
-            SetPedPropIndex(ped, eq.propId, eq.drawableId, eq.textureId or 0, true)
+            local finalDrawableId = eq.drawableId
+            local finalTextureId = eq.textureId or 0
+
+            -- HELMET ACCESSORY LOGIC:
+            if def.type == 'helmet' and accessories then
+                for slot, accData in pairs(accessories) do
+                    if accData and accData.name then
+                        local variants = eq.accessoryDrawables and eq.accessoryDrawables[accData.name]
+                        if variants then
+                            finalDrawableId = visorDown and variants.visorDown or variants.visorUp
+                            -- Sync screen effects
+                            TriggerEvent('mx-inv:client:applyHelmetAccessory', {
+                                propId = eq.propId,
+                                drawableId = finalDrawableId,
+                                textureId = finalTextureId,
+                                accessoryName = accData.name,
+                                visorDown = visorDown
+                            })
+                        end
+                    end
+                end
+            end
+
+            SetPedPropIndex(ped, eq.propId, finalDrawableId, finalTextureId, true)
         else
             ClearPedProp(ped, eq.propId)
+            -- Clear effects
+            SetNightvision(false)
+            SetSeethrough(false)
         end
     elseif eq.componentId and eq.drawableId then
         if isEquipping then
@@ -121,12 +154,31 @@ RegisterNetEvent('mx-inv:client:syncAttachments', function(weaponHashName, attac
     if not HasPedGotWeapon(ped, hash, false) then return end
 
     if attachments then
+        -- RESOLVE weaponDef:
+        -- Search if it's the item name or the weapon hash string
+        local weaponDef = Items[weaponHashName]
+        if not weaponDef then
+            for name, def in pairs(Items) do
+                if def.equipment and (def.equipment.weaponHash == weaponHashName or GetHashKey(def.equipment.weaponHash) == hash) then
+                    weaponDef = def
+                    break
+                end
+            end
+        end
+
+        local eq = weaponDef and weaponDef.equipment
+
         for slot, attachName in pairs(attachments) do
             if attachName then
                 local attachDef = Items[attachName]
-                if attachDef and attachDef.attachment and attachDef.attachment.componentHash then
-                    local compHash = GetHashKey(attachDef.attachment.componentHash)
-                    if compHash ~= 0 then GiveWeaponComponentToPed(ped, hash, compHash) end
+                if attachDef and attachDef.attachment then
+                    -- INTELLIGENT LOOKUP:
+                    local compHashStr = (eq and eq.supportedAttachments and eq.supportedAttachments[slot] and eq.supportedAttachments[slot].componentHash) or attachDef.attachment.componentHash
+                    
+                    if compHashStr and compHashStr ~= "" then
+                        local compHash = GetHashKey(compHashStr)
+                        if compHash ~= 0 then GiveWeaponComponentToPed(ped, hash, compHash) end
+                    end
                 end
             end
         end

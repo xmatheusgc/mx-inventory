@@ -317,6 +317,7 @@ export const ItemDetailsWindow: React.FC<ItemDetailsWindowProps> = ({ item, init
         { id: 'muzzle', label: 'MZL' },
         { id: 'scope', label: 'SCP' },
         { id: 'grip', label: 'GRP' },
+        { id: 'flashlight', label: 'FLS' },
         { id: 'skin', label: 'SKN' },
     ];
 

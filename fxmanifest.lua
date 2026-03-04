@@ -12,7 +12,8 @@ dependencies {
 
 shared_scripts {
     'config.lua',
-    'data/items.lua'
+    'data/items.lua',
+    'data/layouts.lua'
 }
 
 client_scripts {

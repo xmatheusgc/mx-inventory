@@ -15,11 +15,17 @@ function EquipmentAPI.SwapEquipment(src, InventoryMap, fromSlot, toSlot)
 
     if fromItem then
         local ammoToLoad = tonumber(fromItem.metadata and fromItem.metadata.ammo) or 0
-        TriggerClientEvent('mx-inv:client:updateEquipment', src, fromItem.name, true, ammoToLoad)
+        local attachments = fromItem.metadata and fromItem.metadata.attachments or nil
+        local accessories = fromItem.metadata and fromItem.metadata.accessories or nil
+        local visorDown = fromItem.metadata and fromItem.metadata.visorDown or false
+        TriggerClientEvent('mx-inv:client:updateEquipment', src, fromItem.name, true, ammoToLoad, attachments, accessories, visorDown)
     end
     if toItem then
         local ammoToLoad = tonumber(toItem.metadata and toItem.metadata.ammo) or 0
-        TriggerClientEvent('mx-inv:client:updateEquipment', src, toItem.name, true, ammoToLoad)
+        local attachments = toItem.metadata and toItem.metadata.attachments or nil
+        local accessories = toItem.metadata and toItem.metadata.accessories or nil
+        local visorDown = toItem.metadata and toItem.metadata.visorDown or false
+        TriggerClientEvent('mx-inv:client:updateEquipment', src, toItem.name, true, ammoToLoad, attachments, accessories, visorDown)
     end
     print('^2[mx-inv] Swap complete. New state: ' .. json.encode(InventoryMap.equipment) .. '^0')
 end
@@ -67,7 +73,9 @@ function EquipmentAPI.UnloadWeapon(src, InventoryMap, weaponId, containerId, Add
     print('^2[mx-inv] Unload: Unloaded ' .. tostring(currentAmmo) .. 'x ' .. ammoItemName .. ' from ' .. tostring(weapon.name) .. '^0')
 
     local weaponHash = GetHashKey(weaponDef.equipment.weaponHash)
-    TriggerClientEvent('mx-inv:client:updateEquipment', src, weapon.name, true, 0)
+    local accessories = weapon.metadata and weapon.metadata.accessories or nil
+    local visorDown = weapon.metadata and weapon.metadata.visorDown or false
+    TriggerClientEvent('mx-inv:client:updateEquipment', src, weapon.name, true, 0, weapon.metadata and weapon.metadata.attachments, accessories, visorDown)
 end
 
 --- Resolve a helmet from the equipment mapping

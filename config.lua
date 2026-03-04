@@ -19,3 +19,17 @@ Config.Inventory = {
 
 -- Item Definitions
 -- Item Definitions are now in data/items.lua
+
+-- Equipment Slot Mapping (Restrict items to specific slots)
+Config.EquipmentSlots = {
+    ['primary'] = { 'weapon_primary', 'weapon_secondary', 'weapon_smg', 'weapon_rifle', 'weapon_sniper', 'weapon_shotgun' },
+    ['secondary'] = { 'weapon_primary', 'weapon_secondary', 'weapon_smg', 'weapon_rifle', 'weapon_sniper', 'weapon_shotgun' },
+    ['holster'] = { 'weapon_pistol' },
+    ['melee'] = { 'weapon_melee' },
+    ['head'] = { 'helmet' },
+    ['face'] = { 'mask' },
+    ['armor'] = { 'armor' },
+    ['earpiece'] = { 'earpiece' },
+    ['vest'] = { 'vest' },
+    ['backpack'] = { 'backpack', 'bag' },
+}
