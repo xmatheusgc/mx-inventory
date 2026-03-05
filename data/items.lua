@@ -320,5 +320,135 @@ Items = {
             maxWeight = 20.0,
             layout = 'mochila_tatica_expansivel_luc'
         }
-    }
+    },
+
+    -- ============================================================
+    -- MEDICAL / SURVIVAL ITEMS (used by mx-survival-core)
+    -- ============================================================
+    ['bandage'] = {
+        label = "Bandage",
+        weight = 0.1,
+        size = { x = 1, y = 1 },
+        type = "generic",
+        image = "bandage.png",
+        stackable = true,
+        maxStack = 10,
+        consume = {
+            type = "medical",
+            animDict = "anim@heists@narcotics@funding@gang_idle",
+            anim = "gang_idle_plastering",
+            status = {}
+        }
+    },
+    ['suture_kit'] = {
+        label = "Suture Kit",
+        weight = 0.2,
+        size = { x = 1, y = 1 },
+        type = "generic",
+        image = "suture_kit.png",
+        consume = {
+            type = "medical",
+            animDict = "anim@heists@narcotics@funding@gang_idle",
+            anim = "gang_idle_plastering",
+            status = {}
+        }
+    },
+    ['antiseptic'] = {
+        label = "Antiseptic",
+        weight = 0.15,
+        size = { x = 1, y = 1 },
+        type = "generic",
+        image = "antiseptic.png",
+        stackable = true,
+        maxStack = 5,
+        consume = {
+            type = "medical",
+            animDict = "anim@heists@narcotics@funding@gang_idle",
+            anim = "gang_idle_plastering",
+            status = {}
+        }
+    },
+    ['antibiotics'] = {
+        label = "Antibiotics",
+        weight = 0.05,
+        size = { x = 1, y = 1 },
+        type = "generic",
+        image = "antibiotics.png",
+        stackable = true,
+        maxStack = 5,
+        consume = {
+            type = "medical",
+            animDict = "mp_player_intdrink",
+            anim = "loop_bottle",
+            status = {}
+        }
+    },
+    ['painkillers'] = {
+        label = "Painkillers",
+        weight = 0.05,
+        size = { x = 1, y = 1 },
+        type = "generic",
+        image = "painkillers.png",
+        stackable = true,
+        maxStack = 10,
+        consume = {
+            type = "medical",
+            animDict = "mp_player_intdrink",
+            anim = "loop_bottle",
+            status = {}
+        }
+    },
+    ['dirty_water'] = {
+        label = "Dirty Water",
+        weight = 0.5,
+        size = { x = 1, y = 2 },
+        type = "generic",
+        image = "dirty_water.png",
+        consume = {
+            type = "drink",
+            animDict = "mp_player_intdrink",
+            anim = "loop_bottle",
+            prop = "prop_ld_flow_bottle",
+            status = { thirst = 20 }
+        }
+    },
+    ['canned_food'] = {
+        label = "Canned Food",
+        weight = 0.4,
+        size = { x = 1, y = 1 },
+        type = "generic",
+        image = "canned_food.png",
+        consume = {
+            type = "eat",
+            animDict = "mp_player_inteat@burger",
+            anim = "mp_player_int_eat_burger_fp",
+            status = { hunger = 30 }
+        }
+    },
+    ['raw_meat'] = {
+        label = "Raw Meat",
+        weight = 0.5,
+        size = { x = 1, y = 1 },
+        type = "generic",
+        image = "raw_meat.png",
+        consume = {
+            type = "eat",
+            animDict = "mp_player_inteat@burger",
+            anim = "mp_player_int_eat_burger_fp",
+            status = { hunger = 35 }
+        }
+    },
+    ['cooked_meat'] = {
+        label = "Cooked Meat",
+        weight = 0.4,
+        size = { x = 1, y = 1 },
+        type = "generic",
+        image = "cooked_meat.png",
+        consume = {
+            type = "eat",
+            animDict = "mp_player_inteat@burger",
+            anim = "mp_player_int_eat_burger_fp",
+            status = { hunger = 40 }
+        }
+    },
 }
