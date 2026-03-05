@@ -14,9 +14,10 @@ DropAPI.InitDrops()
 DropAPI.StartCleanupThread()
 
 
-local Inventory = {}
-local ActiveStashes = {}
-local PlayerOpenStash = {}
+Inventory = {}
+InventoryAPI.InventoryMap = Inventory
+ActiveStashes = StashAPI.ActiveStashes
+PlayerOpenStash = StashAPI.PlayerOpenStash
 math.randomseed(os.time())
 
 
@@ -623,6 +624,9 @@ RegisterNetEvent('mx-inv:server:useItem', function(data)
     -- Trigger Client Animation/Status
     TriggerClientEvent('mx-inv:client:playAnim', src, def.consume)
     print('^2[mx-inv] Debug UseItem: Success. Consumed 1 ' .. itemName .. '^0')
+
+    -- Notify mx-survival-core about item consumption (non-breaking: no-op if survival not running)
+    TriggerEvent('mx-survival:server:onItemConsumed', src, itemName, def.consume)
 
     -- Refresh Inventory UI if open
     -- Refresh Inventory UI if open

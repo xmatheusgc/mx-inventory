@@ -28,7 +28,7 @@ end
 
 --- Get a player's raw Inventory block
 function InventoryAPI.GetPlayerInventory(src)
-    return Inventory[src]
+    return InventoryAPI.InventoryMap and InventoryAPI.InventoryMap[src] or nil
 end
 
 --- Extract all active Sub-Containers (Backpacks, Vests)
@@ -79,8 +79,8 @@ function InventoryAPI.GetContainerProperties(containerId, containerMap)
         return props
     end
 
-    if containerId:sub(1, 6) == 'stash_' then
-        local stash = ActiveStashes[containerId]
+    if containerId:sub(1, 6) == 'stash_' or containerId:sub(1, 6) == 'stash-' then
+        local stash = StashAPI.ActiveStashes[containerId]
         if stash then
             props.width = stash.size.width
             props.height = stash.size.height
