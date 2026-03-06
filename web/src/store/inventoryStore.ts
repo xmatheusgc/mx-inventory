@@ -76,7 +76,7 @@ interface InventoryState {
     rotateItem: (containerId: string, itemName: string) => void;
     updateContainerWeight: (containerId: string, weight: number) => void;
     equipItem: (slot: string, item: Item, fromContainerId: string) => void;
-    unequipItem: (slot: string, toContainerId: string, targetSlot: { x: number, y: number }, folded?: boolean) => void;
+    unequipItem: (slot: string, toContainerId: string, targetSlot: { x: number, y: number }, folded?: boolean, rotated?: boolean) => void;
     swapEquipment: (fromSlot: string, toSlot: string) => void;
     loadAmmoIntoWeapon: (weaponIdOrSlot: string, weaponContainerId: string, ammoItem: Item, ammoContainerId: string) => void;
     updateWeaponAmmo: (weaponSlot: string, totalAmmo: number, clipAmmo: number) => void;
@@ -450,7 +450,7 @@ export const useInventoryStore = create<InventoryState>((set) => ({
         };
     }),
 
-    unequipItem: (slot: string, toContainerId: string, targetSlot: { x: number, y: number }, folded?: boolean) => set((state: InventoryState) => {
+    unequipItem: (slot: string, toContainerId: string, targetSlot: { x: number, y: number }, folded?: boolean, rotated?: boolean) => set((state: InventoryState) => {
         console.log(`[mx-inv] STORE ACTION > unequipItem: From slot ${slot} to container ${toContainerId} at X:${targetSlot.x} Y:${targetSlot.y}`);
         const item = state.equipment[slot];
         if (!item) return state;
@@ -465,8 +465,9 @@ export const useInventoryStore = create<InventoryState>((set) => ({
         // If explicitly folded (e.g. folded during drag), use foldedSize.
         // If unknown, default to expanded (equip always equips expanded).
         const isFolded = folded ?? false;
+        const isRotated = rotated ?? false;
         const config = ITEM_CONFIGS[item.name];
-        let newItem = { ...item, slot: targetSlot, rotated: false, folded: isFolded };
+        let newItem = { ...item, slot: targetSlot, rotated: isRotated, folded: isFolded };
         if (config) {
             newItem.size = isFolded ? config.foldedSize : config.expandedSize;
         }

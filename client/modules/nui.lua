@@ -112,7 +112,9 @@ RegisterNUICallback('removeAttachment', function(data, cb)
         attachmentSlot = data.attachmentSlot,
         attachmentItem = data.attachmentItem,
         toContainerId = data.toContainerId,
-        toSlot = data.toSlot
+        toSlot = data.toSlot,
+        rotated = data.rotated,
+        folded = data.folded
     })
     cb('ok')
 end)
@@ -136,7 +138,9 @@ RegisterNUICallback('removeHelmetAccessory', function(data, cb)
         accessorySlot = data.accessorySlot,
         accessoryItem = data.accessoryItem,
         toContainerId = data.toContainerId,
-        toSlot = data.toSlot
+        toSlot = data.toSlot,
+        rotated = data.rotated,
+        folded = data.folded
     })
     cb('ok')
 end)

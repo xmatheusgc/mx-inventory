@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { fetchNui } from '../utils/nui';
 import { type Item } from '../store/inventoryStore';
 import { GIVE_ITEM_KEYS } from '../config/giveItem';
+import { getImageUrl } from '../utils/images';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -135,7 +136,7 @@ export const GiveItemModal: React.FC<GiveItemModalProps> = ({
 
     // ── Render: Receiver modal ────────────────────────────────────────────────
     if (receiveRequest) {
-        const imgSrc = receiveRequest.image ? `items/${receiveRequest.image}` : null;
+        const imgSrc = getImageUrl(receiveRequest.image);
         return (
             <div className="fixed inset-0 z-[200] flex items-center justify-center">
                 <div
@@ -215,7 +216,7 @@ export const GiveItemModal: React.FC<GiveItemModalProps> = ({
                 <div className="flex items-center gap-3 bg-zinc-800 rounded-md p-3">
                     {giveTarget.item.image && (
                         <img
-                            src={giveTarget.item.image}
+                            src={getImageUrl(giveTarget.item.image)}
                             alt={giveTarget.item.label ?? giveTarget.item.name}
                             className="w-10 h-10 object-contain"
                             onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}

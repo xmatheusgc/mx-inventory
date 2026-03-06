@@ -3,8 +3,9 @@ import type { Item } from '../store/inventoryStore';
 import { useInventoryStore } from '../store/inventoryStore';
 import { useDroppable, useDraggable } from '@dnd-kit/core';
 import { createPortal } from 'react-dom';
-import { ArrowDownToLine, Eye, EyeOff } from 'lucide-react';
+import { Eye, EyeOff, ArrowDownToLine } from 'lucide-react';
 import { fetchNui } from '../utils/nui';
+import { getImageUrl } from '../utils/images';
 
 interface ItemDetailsWindowProps {
     item: Item;
@@ -46,7 +47,7 @@ const DraggableAttachment: React.FC<{
         <div ref={setNodeRef} {...listeners} {...attributes} style={style} className="w-10 h-10 cursor-grab active:cursor-grabbing">
             {attachmentDef?.image ? (
                 <img
-                    src={`/images/${attachmentDef.image || 'placeholder.png'}`}
+                    src={getImageUrl(attachmentDef.image)}
                     alt={attachmentDef.label}
                     className="w-full h-full object-contain drop-shadow-lg pointer-events-none"
                 />
@@ -166,7 +167,7 @@ const DraggableHelmetAccessory: React.FC<{
         <div ref={setNodeRef} {...listeners} {...attributes} style={style} className="w-10 h-10 cursor-grab active:cursor-grabbing">
             {accessoryDef?.image ? (
                 <img
-                    src={`/images/${accessoryDef.image || 'placeholder.png'}`}
+                    src={getImageUrl(accessoryDef.image)}
                     alt={accessoryDef.label}
                     className="w-full h-full object-contain drop-shadow-lg pointer-events-none"
                 />
@@ -361,7 +362,7 @@ export const ItemDetailsWindow: React.FC<ItemDetailsWindowProps> = ({ item, init
                 <div className="flex gap-4">
                     <div className="w-24 h-24 bg-black/40 border border-white/5 rounded flex items-center justify-center shrink-0">
                         {item.image ? (
-                            <img src={item.image} alt={item.name} className="w-full h-full object-contain p-2" />
+                            <img src={getImageUrl(item.image)} alt={item.name} className="w-full h-full object-contain p-2" />
                         ) : (
                             <span className="text-xs text-zinc-600 italic">No Image</span>
                         )}

@@ -222,7 +222,10 @@ export function useDndHandlers({
                         for (const ci of c.items) {
                             if (ci.type?.startsWith('weapon_')) {
                                 const wDef = defs[ci.name];
-                                if (wDef?.equipment?.supportedAttachments?.[attachSlot] && !ci.metadata?.attachments?.[attachSlot]) {
+                                const isSupported = wDef?.equipment?.supportedAttachments?.[attachSlot];
+                                const matchesCaliber = !attachDef.attachment.caliber || (wDef?.equipment?.caliber === attachDef.attachment.caliber);
+
+                                if (isSupported && matchesCaliber && !ci.metadata?.attachments?.[attachSlot]) {
                                     compatibleIds.add(ci.id);
                                     compatibleIds.add(`attachment-${ci.id}-${attachSlot}`);
                                 }
@@ -232,7 +235,10 @@ export function useDndHandlers({
                     for (const [slot, eq] of Object.entries(equipment)) {
                         if (eq?.type?.startsWith('weapon_')) {
                             const wDef = defs[eq.name];
-                            if (wDef?.equipment?.supportedAttachments?.[attachSlot] && !eq.metadata?.attachments?.[attachSlot]) {
+                            const isSupported = wDef?.equipment?.supportedAttachments?.[attachSlot];
+                            const matchesCaliber = !attachDef.attachment.caliber || (wDef?.equipment?.caliber === attachDef.attachment.caliber);
+
+                            if (isSupported && matchesCaliber && !eq.metadata?.attachments?.[attachSlot]) {
                                 compatibleIds.add(eq.id);
                                 compatibleIds.add(`equip-${slot}`);
                                 compatibleIds.add(`attachment-${eq.id}-${attachSlot}`);
@@ -409,7 +415,9 @@ export function useDndHandlers({
                     accessorySlot: slotId,
                     accessoryItem: accessoryName,
                     toContainerId: baseId,
-                    toSlot: targetSlot
+                    toSlot: targetSlot,
+                    rotated: finalRotation,
+                    folded: finalFolded
                 });
             } else {
                 const { weaponId, weaponContainerId, slotId, attachmentName } = dragData;
@@ -420,7 +428,9 @@ export function useDndHandlers({
                     attachmentSlot: slotId,
                     attachmentItem: attachmentName,
                     toContainerId: baseId,
-                    toSlot: targetSlot
+                    toSlot: targetSlot,
+                    rotated: finalRotation,
+                    folded: finalFolded
                 });
             }
             return;
@@ -518,6 +528,7 @@ export function useDndHandlers({
             // Verify target weapon actually supports this slot (double check)
             const attachDef = itemDefs[item.name];
             const validSlot = attachDef?.attachment?.slot;
+            const attachCaliber = attachDef?.attachment?.caliber;
 
             if (validSlot !== attachmentSlot) return;
 
@@ -535,6 +546,7 @@ export function useDndHandlers({
             if (targetWeapon) {
                 const wDef = itemDefs[targetWeapon.name];
                 if (!wDef?.equipment?.supportedAttachments?.[attachmentSlot]) return;
+                if (attachCaliber && wDef.equipment.caliber !== attachCaliber) return;
 
                 // It is valid! Prevent normal move and handle attachment
                 // Update store instantly for feedback
@@ -568,13 +580,18 @@ export function useDndHandlers({
                 const weaponDef = itemDefs[targetItem.name];
 
                 if (ammoDef?.ammo?.caliber === weaponDef?.equipment?.caliber) {
-                    loadAmmoIntoWeapon(targetItem.id, targetContainerId, item, fromContainerId);
-                    fetchNui('loadAmmo', {
-                        weaponId: targetItem.id,
-                        weaponContainerId: targetContainerId,
-                        ammoItemId: item.id,
-                        ammoName: item.name,
-                        fromContainerId
+                    let weaponSlotToPass = targetItem.id;
+                    if (targetContainerId.startsWith('equip-')) {
+                        weaponSlotToPass = targetContainerId.replace('equip-', '');
+                    }
+
+                    loadAmmoIntoWeapon(weaponSlotToPass, targetContainerId, item, fromContainerId);
+                    fetchNui('loadAmmoIntoWeapon', {
+                        id: item.id,
+                        ammoItem: { name: item.name, slot: item.slot },
+                        weaponSlot: weaponSlotToPass,
+                        weaponContainer: targetContainerId,
+                        ammoContainer: fromContainerId
                     });
                     return;
                 }
@@ -585,8 +602,10 @@ export function useDndHandlers({
                 const attachDef = itemDefs[item.name];
                 const weaponDef = itemDefs[targetItem.name];
                 const attachSlot = attachDef?.attachment?.slot;
+                const attachCaliber = attachDef?.attachment?.caliber;
 
                 if (attachSlot && weaponDef?.equipment?.supportedAttachments?.[attachSlot]) {
+                    if (attachCaliber && weaponDef.equipment.caliber !== attachCaliber) return;
                     if (!targetItem.metadata?.attachments?.[attachSlot]) {
                         attachToWeapon(targetItem.id, targetContainerId, attachSlot, item, fromContainerId);
                         fetchNui('attachToWeapon', {
@@ -628,12 +647,12 @@ export function useDndHandlers({
             // 2. Ammo Stacking (Drag ammo onto ammo) OR Same Item Stacking
             if (targetItem && targetItem.id !== item.id && targetItem.name === item.name) {
                 if (targetItem.stackable && item.stackable) {
-                    stackItems(item, fromContainerId, targetItem, targetContainerId);
+                    stackItems(item.id, fromContainerId, targetItem.id, targetContainerId);
                     fetchNui('stackItems', {
-                        sourceItemId: item.id,
-                        sourceContainerId: fromContainerId,
-                        targetItemId: targetItem.id,
-                        targetContainerId: targetContainerId,
+                        fromItemId: item.id,
+                        fromContainerId: fromContainerId,
+                        toItemId: targetItem.id,
+                        toContainerId: targetContainerId,
                         amount: item.count || 1 // In future: open modal to select split amount
                     });
                     return;
@@ -738,7 +757,7 @@ export function useDndHandlers({
 
                 if (isUnequipping) {
                     const fromEquipSlot = fromContainerId.replace('equip-', '');
-                    unequipItem(fromEquipSlot, baseId, targetSlot, finalFolded);
+                    unequipItem(fromEquipSlot, baseId, targetSlot, finalFolded, finalRotation);
                     fetchNui('unequipItem', {
                         item: item.name,
                         id: item.id,

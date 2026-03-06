@@ -55,7 +55,7 @@ export function useNuiMessages() {
                             size: resolvedSize,
                             weight: def?.weight || item.weight || 0,
                             type: def?.type || item.type || 'generic',
-                            image: (def?.image || item.image) ? `items/${def?.image || item.image}` : undefined
+                            image: def?.image || item.image || undefined
                         };
                     });
 
@@ -81,7 +81,7 @@ export function useNuiMessages() {
                                     ...item,
                                     folded: false,
                                     size: itemConfig ? itemConfig.expandedSize : (def?.size || item.size || { x: 1, y: 1 }),
-                                    image: (def?.image || item.image) ? `items/${def?.image || item.image}` : undefined
+                                    image: def?.image || item.image || undefined
                                 };
                             } else {
                                 enrichedEquip[slot] = null;

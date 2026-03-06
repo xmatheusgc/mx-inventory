@@ -81,7 +81,7 @@ end
 -- Remove redundant FindFreeSlot
 
 -- Helper: Add Item to Player (Support for Multi-Container, Rotation & Specific Slot)
-local function AddItem(src, item, count, metadata, targetSlot, targetContainerId)
+local function AddItem(src, item, count, metadata, targetSlot, targetContainerId, rotated, folded)
     if not Inventory[src] then return false, "Inventory not loaded" end
     local def = ItemDefs[item]
     if not def then return false, "Invalid item" end
@@ -109,12 +109,14 @@ local function AddItem(src, item, count, metadata, targetSlot, targetContainerId
                         count = count,
                         slot = { x = targetSlot.x, y = targetSlot.y },
                         size = { x = itemSize.x, y = itemSize.y },
+                        rotated = rotated or false,
+                        folded = folded or false,
                         id = InventoryAPI.GenerateUUID(),
                         metadata = metadata
                     }
                     table.insert(container, newItem)
                     print('^2[mx-inv] AddItem: Placed ' .. item .. ' into ' .. targetContainerId .. ' at ' .. targetSlot.x .. ',' .. targetSlot.y .. '^0')
-                    return true, "Adicionado no slot específico"
+                    return true, "Adicionado no slot específico", newItem.id
                 else
                     print('^1[mx-inv] AddItem Failed: ' .. (err or "Invalid slot") .. '^0')
                 end
@@ -154,7 +156,7 @@ local function AddItem(src, item, count, metadata, targetSlot, targetContainerId
                                 count = count - toAdd
                                 currentWeight = currentWeight + (itemWeight * toAdd)
                                 if count <= 0 then
-                                    return true, "Stacked completely in " .. cKey
+                                    return true, "Stacked completely in " .. cKey, invItem.id
                                 end
                             end
                         end
@@ -168,7 +170,7 @@ local function AddItem(src, item, count, metadata, targetSlot, targetContainerId
     if count > 0 then
         -- Priority list of containers
         local containerOrder = {
-            { key = 'player', label = 'Bolsos', w = Config.Inventory.Slots.width, h = Config.Inventory.Slots.height, maxW = Config.Inventory.MaxWeight }
+            { key = 'player', label = 'Bolsos', w = Config.Inventory.Slots.width, h = Config.Inventory.Slots.height, maxW = Config.Inventory.MaxWeight, layout = Config.Inventory.Slots.layout }
         }
         if Inventory[src].equipment then
             for slot, eqItem in pairs(Inventory[src].equipment) do
@@ -179,7 +181,8 @@ local function AddItem(src, item, count, metadata, targetSlot, targetContainerId
                         label = eqDef.label or eqItem.name,
                         w = eqDef.container.size.width,
                         h = eqDef.container.size.height,
-                        maxW = eqDef.container.maxWeight
+                        maxW = eqDef.container.maxWeight,
+                        layout = eqDef.container.layout
                     })
                 end
             end
@@ -223,6 +226,7 @@ local function AddItem(src, item, count, metadata, targetSlot, targetContainerId
                 slot = { x = foundSlot.x, y = foundSlot.y },
                 size = baseSizeToSave,
                 rotated = foundSlot.rotated,
+                folded = folded or false,
                 id = InventoryAPI.GenerateUUID(),
                 metadata = (amount == count) and metadata or nil
             }
@@ -234,9 +238,12 @@ local function AddItem(src, item, count, metadata, targetSlot, targetContainerId
             count = count - amount
 
             -- If we still have items but just filled one container, we continue while-loop
+            if count <= 0 then
+                return true, "Adicionado com sucesso", newItem.id
+            end
         end
 
-        return true, "Adicionado com sucesso"
+        return true, "Adicionado com múltiplos slots"
     end
     return true, "Adicionado"
 end
@@ -293,7 +300,7 @@ local function AutoEquipItem(src, item, count, metadata)
             local attaches = newItem.metadata and newItem.metadata.attachments or nil
             TriggerClientEvent('mx-inv:client:updateEquipment', src, item, true, ammo, attaches)
 
-            return true, slot
+            return true, slot, newItem.id
         end
     end
 
@@ -1552,9 +1559,19 @@ RegisterNetEvent('mx-inv:server:attachToWeapon', function(data)
         end
     end
 
-    if not attachIndex then
-        print('^1[mx-inv] Attach: Attachment item not found in source container.^0')
-        return
+    -- Validation: Check caliber compatibility
+    local attachDef = Items[attachmentItemName]
+    local weaponDef = Items[weapon.name]
+    if attachDef and weaponDef and attachDef.attachment and attachDef.attachment.caliber then
+        local weaponCaliber = weaponDef.equipment and weaponDef.equipment.caliber
+        if weaponCaliber and attachDef.attachment.caliber ~= weaponCaliber then
+            print('^1[mx-inv] Attach: Caliber mismatch! ' ..
+                tostring(attachDef.attachment.caliber) .. ' vs ' .. tostring(weaponCaliber) .. '^0')
+            TriggerClientEvent('mx-inv:client:notify', src, "Este acessório não é compatível com o calibre desta arma!",
+                "error")
+            UpdateClientInventory(src)
+            return
+        end
     end
 
     -- Remove attachment from source container
@@ -1650,7 +1667,7 @@ RegisterNetEvent('mx-inv:server:removeHelmetAccessory', function(data)
 
     if itemName then
         -- Add back to target container
-        local added = AddItem(src, itemName, 1, nil, toSlot, toContainerId)
+        local added = AddItem(src, itemName, 1, nil, toSlot, toContainerId, data.rotated, data.folded)
         if not added then
             -- Fallback: already handled by AddItem (will auto-find space or fail)
         end
@@ -1717,10 +1734,18 @@ RegisterNetEvent('mx-inv:server:removeAttachment', function(data)
         local toKey = (data.toContainerId == 'player-inv') and 'player' or data.toContainerId
         local toContainer = containerMap[toKey]
         if toContainer then
+            local def = ItemDefs[attachmentItemName]
+            local baseSize = def and def.size or {x=1, y=1}
+            local currentFold = data.folded or false
+            if currentFold and def and def.foldedSize then baseSize = def.foldedSize end
+
             local newItem = {
                 name = attachmentItemName,
                 count = 1,
                 slot = data.toSlot,
+                rotated = data.rotated or false,
+                folded = currentFold,
+                size = { x = baseSize.x, y = baseSize.y },
                 id = InventoryAPI.GenerateUUID()
             }
             table.insert(toContainer, newItem)
@@ -2066,18 +2091,28 @@ RegisterNetEvent('mx-inv:server:dropItem', function(data)
 
     if not Inventory[src] then return end
 
-    local containerKey = (containerId == 'player-inv') and 'player' or containerId
-    local container = Inventory[src][containerKey]
-    if not container then return end
-
-    -- Find and remove item
     local targetItem = nil
     local targetIndex = -1
-    for i, item in ipairs(container) do
-        if item.id == itemId then
-            targetItem = item
-            targetIndex = i
-            break
+    local isEquipment = false
+    local equipSlot = nil
+
+    if string.sub(containerId, 1, 6) == 'equip-' then
+        equipSlot = string.sub(containerId, 7)
+        if Inventory[src].equipment and Inventory[src].equipment[equipSlot] and Inventory[src].equipment[equipSlot].id == itemId then
+            targetItem = Inventory[src].equipment[equipSlot]
+            isEquipment = true
+        end
+    else
+        local containerKey = (containerId == 'player-inv') and 'player' or containerId
+        local container = Inventory[src][containerKey]
+        if container then
+            for i, item in ipairs(container) do
+                if item.id == itemId then
+                    targetItem = item
+                    targetIndex = i
+                    break
+                end
+            end
         end
     end
 
@@ -2085,9 +2120,22 @@ RegisterNetEvent('mx-inv:server:dropItem', function(data)
 
     -- Update inventory
     if targetItem.count == amount then
-        table.remove(container, targetIndex)
+        if isEquipment then
+            Inventory[src].equipment[equipSlot] = nil
+            TriggerClientEvent('mx-inv:client:updateEquipment', src, targetItem.name, false)
+        else
+            local containerKey = (containerId == 'player-inv') and 'player' or containerId
+            table.remove(Inventory[src][containerKey], targetIndex)
+        end
     else
         targetItem.count = targetItem.count - amount
+    end
+
+    -- Store container items in metadata to preserve them during drop
+    if Inventory[src][targetItem.id] then
+        if not targetItem.metadata then targetItem.metadata = {} end
+        targetItem.metadata.containerItems = Inventory[src][targetItem.id]
+        Inventory[src][targetItem.id] = nil
     end
 
     -- Calculate drop position
@@ -2129,8 +2177,11 @@ RegisterNetEvent('mx-inv:server:pickupItem', function(dropId)
     end
 
     -- 1. Try Auto-Equip
-    local equipped, slotLabel = AutoEquipItem(src, drop.name, drop.count, drop.metadata)
+    local equipped, slotLabel, newUuid = AutoEquipItem(src, drop.name, drop.count, drop.metadata)
     if equipped then
+        if drop.metadata and drop.metadata.containerItems and newUuid then
+            Inventory[src][newUuid] = drop.metadata.containerItems
+        end
         DropAPI.DeleteDrop(dropId)
         DropAPI.SyncDrops(-1)
         TriggerClientEvent('mx-inv:client:notify', src, 'Equipou ' .. drop.label .. ' automaticamente.', 'success')
@@ -2142,8 +2193,11 @@ RegisterNetEvent('mx-inv:server:pickupItem', function(dropId)
     end
 
     -- 2. Try to add to inventory
-    local success, msg = AddItem(src, drop.name, drop.count, drop.metadata)
+    local success, msg, newUuid = AddItem(src, drop.name, drop.count, drop.metadata)
     if success then
+        if drop.metadata and drop.metadata.containerItems and newUuid then
+            Inventory[src][newUuid] = drop.metadata.containerItems
+        end
         DropAPI.DeleteDrop(dropId)
         DropAPI.SyncDrops(-1)
         TriggerClientEvent('mx-inv:client:notify', src, 'Pegou ' .. drop.label .. ': ' .. msg, 'success')
@@ -2474,6 +2528,8 @@ RegisterNetEvent('mx-inv:server:respondGiveItem', function(data)
     end
 
     -- Atomic transfer: remove from source, add to target
+    local containerContents = Inventory[fromSrc][pending.itemId]
+    
     local removedItem = RemoveItemById(Inventory[fromSrc], pending.itemId, pending.count)
     if not removedItem then
         TriggerClientEvent('mx-inv:client:giveItemResult', fromSrc,
@@ -2482,14 +2538,27 @@ RegisterNetEvent('mx-inv:server:respondGiveItem', function(data)
         return
     end
 
-    local added, addMsg = AddItem(targetSrc, removedItem.name, removedItem.count)
+    if containerContents then
+        if not removedItem.metadata then removedItem.metadata = {} end
+        removedItem.metadata.containerItems = containerContents
+        Inventory[fromSrc][pending.itemId] = nil
+    end
+
+    local added, addMsg, newUuid = AddItem(targetSrc, removedItem.name, removedItem.count, removedItem.metadata)
     if not added then
         -- Rollback: give item back to source
-        AddItem(fromSrc, removedItem.name, removedItem.count)
+        local rbAdded, rbMsg, rbUuid = AddItem(fromSrc, removedItem.name, removedItem.count, removedItem.metadata)
+        if rbAdded and containerContents and rbUuid then
+            Inventory[fromSrc][rbUuid] = containerContents
+        end
         TriggerClientEvent('mx-inv:client:giveItemResult', fromSrc, { ok = false, reason = 'Inventário do alvo cheio.' })
         TriggerClientEvent('mx-inv:client:giveItemResult', targetSrc,
             { ok = false, reason = 'Seu inventário está cheio.' })
         return
+    end
+
+    if added and containerContents and newUuid then
+        Inventory[targetSrc][newUuid] = containerContents
     end
 
     -- Save both players
@@ -2532,7 +2601,7 @@ RegisterNetEvent('mx-inv:server:useHotbar', function(slotIndex)
     local slotMap = {
         [1] = 'primary',
         [2] = 'secondary',
-        [3] = 'pistol',
+        [3] = 'holster',
         [4] = 'melee'
     }
 

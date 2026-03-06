@@ -22,7 +22,7 @@ Items = {
         weight = 0.2,
         size = { x = 1, y = 1 },
         type = "generic",
-        image = "bread.png",
+        image = "WEAPON_BREAD.PNG",
         dropProp = "prop_sandwich_01",
         consume = {
             type = "eat",
@@ -37,7 +37,7 @@ Items = {
         weight = 0.5,
         size = { x = 2, y = 2 },
         type = "generic",
-        image = "medkit.png"
+        image = "medikit.png"
     },
 
     -- ============================================================
@@ -45,43 +45,100 @@ Items = {
     -- ============================================================
 
     -- 9x19mm family
-    ['pistol'] = {
-        label = "Pistol",
+    ['w_pi_pistol'] = {
+        label = "M9 Pistol",
         weight = 1.5,
         size = { x = 2, y = 1 },
         type = "weapon_pistol",
-        image = "pistol.png",
+        image = "WEAPON_PISTOL.png",
         dropProp = "w_pi_pistol",
         equipment = {
             weaponHash = "WEAPON_PISTOL",
-            caliber = "ammo_9mm",
-            defaultMagCapacity = 12,
+            caliber = "ammo_9x19",
+            defaultMagCapacity = 15,
             supportedAttachments = {
                 muzzle = { label = "Muzzle", componentHash = "COMPONENT_AT_PI_SUPP_02" },
-                scope  = { label = "Scope", componentHash = "" },
                 flashlight = { label = "Flashlight", componentHash = "COMPONENT_AT_PI_FLSH" },
             }
         }
     },
 
-    -- 5.56x45mm family
-    ['rifle'] = {
-        label = "Assault Rifle",
-        weight = 3.5,
+    -- 5.45x39mm family
+    ['w_ar_assaultrifle'] = {
+        label = "AK74N",
+        weight = 3.4,
         size = { x = 4, y = 2 },
         type = "weapon_rifle",
-        image = "rifle.png",
+        image = "WEAPON_ASSAULTRIFLE.png",
         dropProp = "w_ar_assaultrifle",
         equipment = {
             weaponHash = "WEAPON_ASSAULTRIFLE",
-            caliber = "ammo_556",
+            caliber = "ammo_545x39",
             defaultMagCapacity = 30,
             supportedAttachments = {
                 muzzle = { label = "Muzzle", componentHash = "COMPONENT_AT_AR_SUPP_02" },
                 scope  = { label = "Scope", componentHash = "COMPONENT_AT_SCOPE_MACRO_02" },
                 grip   = { label = "Grip", componentHash = "COMPONENT_AT_AR_AFGRIP" },
                 flashlight = { label = "Flashlight", componentHash = "COMPONENT_AT_AR_FLSH" },
-                skin   = { label = "Skin", componentHash = "" },
+            }
+        }
+    },
+
+    -- 5.56x45mm family
+    ['w_ar_specialcarbine'] = {
+        label = "IA2",
+        weight = 3.2,
+        size = { x = 4, y = 2 },
+        type = "weapon_rifle",
+        image = "WEAPON_SPECIALCARBINE.png",
+        dropProp = "w_ar_specialcarbine",
+        equipment = {
+            weaponHash = "WEAPON_SPECIALCARBINE",
+            caliber = "ammo_556x45",
+            defaultMagCapacity = 30,
+            supportedAttachments = {
+                muzzle = { label = "Muzzle", componentHash = "COMPONENT_AT_AR_SUPP_02" },
+                scope  = { label = "Scope", componentHash = "COMPONENT_AT_SCOPE_MACRO_02" },
+                grip   = { label = "Grip", componentHash = "COMPONENT_AT_AR_AFGRIP" },
+                flashlight = { label = "Flashlight", componentHash = "COMPONENT_AT_AR_FLSH" },
+            }
+        }
+    },
+
+    -- 7.62x51mm family
+    ['w_sl_battlerifle_m32'] = {
+        label = "ParaFAL",
+        weight = 4.0,
+        size = { x = 4, y = 2 },
+        type = "weapon_rifle",
+        image = "WEAPON_HEAVYRIFLE.png",
+        dropProp = "w_sl_battlerifle_m32",
+        equipment = {
+            weaponHash = "WEAPON_BATTLERIFLE",
+            caliber = "ammo_762x51",
+            defaultMagCapacity = 20,
+            supportedAttachments = {
+                muzzle = { label = "Muzzle", componentHash = "COMPONENT_AT_AR_SUPP_02" },
+                scope  = { label = "Scope", componentHash = "COMPONENT_AT_SCOPE_MACRO_02" },
+                flashlight = { label = "Flashlight", componentHash = "COMPONENT_AT_AR_FLSH" },
+            }
+        }
+    },
+    ['w_ar_parafal'] = {
+        label = "Para FAL",
+        weight = 4.2,
+        size = { x = 4, y = 2 },
+        type = "weapon_rifle",
+        image = "WEAPON_MILITARYRIFLE.png",
+        dropProp = "w_ar_assaultrifle",
+        equipment = {
+            weaponHash = "WEAPON_MILITARYRIFLE",
+            caliber = "ammo_762x51",
+            defaultMagCapacity = 20,
+            supportedAttachments = {
+                muzzle = { label = "Muzzle", componentHash = "COMPONENT_AT_AR_SUPP_02" },
+                scope  = { label = "Scope", componentHash = "COMPONENT_AT_SCOPE_MACRO_02" },
+                flashlight = { label = "Flashlight", componentHash = "COMPONENT_AT_AR_FLSH" },
             }
         }
     },
@@ -92,7 +149,7 @@ Items = {
         weight = 3.5,
         size = { x = 4, y = 2 },
         type = "weapon_shotgun",
-        image = "shotgun.png",
+        image = "WEAPON_PUMPSHOTGUN.png",
         dropProp = "w_sg_pumpshotgun",
         equipment = {
             weaponHash = "WEAPON_PUMPSHOTGUN",
@@ -111,7 +168,7 @@ Items = {
         weight = 0.3,
         size = { x = 1, y = 3 },
         type = "weapon_melee",
-        image = "knife.png",
+        image = "WEAPON_KNIFE.png",
         equipment = {
             weaponHash = "WEAPON_KNIFE"
         }
@@ -120,29 +177,53 @@ Items = {
     -- ============================================================
     -- AMMUNITION (stackable, max 150)
     -- ============================================================
-    ['ammo_9mm'] = {
-        label = "9x19mm",
+    ['ammo_9x19'] = {
+        label = "9x19mm Parabellum",
         weight = 0.01,
         size = { x = 1, y = 1 },
         type = "ammo",
-        image = "ammo_9mm.png",
+        image = "ammo-9.png",
         dropProp = "prop_ld_ammo_pack_01",
         stackable = true,
         maxStack = 150,
         ammo = {
-            caliber = "ammo_9mm",
+            caliber = "ammo_9x19",
         }
     },
-    ['ammo_556'] = {
-        label = "5.56x45mm",
+    ['ammo_545x39'] = {
+        label = "5.45x39mm Soviet",
         weight = 0.01,
         size = { x = 1, y = 1 },
         type = "ammo",
-        image = "ammo_556.png",
+        image = "ammo-rifle2.png",
         stackable = true,
         maxStack = 150,
         ammo = {
-            caliber = "ammo_556",
+            caliber = "ammo_545x39",
+        }
+    },
+    ['ammo_556x45'] = {
+        label = "5.56x45mm NATO",
+        weight = 0.01,
+        size = { x = 1, y = 1 },
+        type = "ammo",
+        image = "ammo-rifle.png",
+        stackable = true,
+        maxStack = 150,
+        ammo = {
+            caliber = "ammo_556x45",
+        }
+    },
+    ['ammo_762x51'] = {
+        label = "7.62x51mm NATO",
+        weight = 0.02,
+        size = { x = 1, y = 1 },
+        type = "ammo",
+        image = "rifle_ammo.png",
+        stackable = true,
+        maxStack = 150,
+        ammo = {
+            caliber = "ammo_762x51",
         }
     },
     ['ammo_12gauge'] = {
@@ -150,7 +231,7 @@ Items = {
         weight = 0.03,
         size = { x = 1, y = 1 },
         type = "ammo",
-        image = "ammo_12gauge.png",
+        image = "ammo-shotgun.png",
         stackable = true,
         maxStack = 150,
         ammo = {
@@ -161,26 +242,52 @@ Items = {
     -- ============================================================
     -- WEAPON ATTACHMENTS
     -- ============================================================
-    ['suppressor_pistol'] = {
-        label = "Pistol Suppressor",
+    ['suppressor_9x19'] = {
+        label = "Suppressor 9x19mm",
         weight = 0.3,
         size = { x = 2, y = 1 },
         type = "attachment_muzzle",
-        image = "suppressor.png",
+        image = "suppressor_attachment.png",
         attachment = {
             slot = "muzzle",
+            caliber = "ammo_9x19",
             componentHash = "COMPONENT_AT_PI_SUPP_02",
         }
     },
-    ['suppressor_rifle'] = {
-        label = "Rifle Suppressor",
+    ['suppressor_545x39'] = {
+        label = "Suppressor 545x39mm",
         weight = 0.4,
-        size = { x = 2, y = 1 },
+        size = { x = 3, y = 1 },
         type = "attachment_muzzle",
-        image = "suppressor_rifle.png",
+        image = "suppressor_attachment.png",
         attachment = {
             slot = "muzzle",
+            caliber = "ammo_545x39",
             componentHash = "COMPONENT_AT_AR_SUPP_02",
+        }
+    },
+    ['suppressor_556x45'] = {
+        label = "Suppressor 556x45mm",
+        weight = 0.4,
+        size = { x = 3, y = 1 },
+        type = "attachment_muzzle",
+        image = "suppressor_attachment.png",
+        attachment = {
+            slot = "muzzle",
+            caliber = "ammo_556x45",
+            componentHash = "COMPONENT_AT_AR_SUPP_02",
+        }
+    },
+    ['suppressor_762x51'] = {
+        label = "Suppressor 762x51mm",
+        weight = 0.5,
+        size = { x = 3, y = 1 },
+        type = "attachment_muzzle",
+        image = "suppressor_attachment.png",
+        attachment = {
+            slot = "muzzle",
+            caliber = "ammo_762x51",
+            componentHash = "COMPONENT_AT_AR_SUPP",
         }
     },
     ['flashlight'] = {
@@ -188,7 +295,7 @@ Items = {
         weight = 0.2,
         size = { x = 1, y = 1 },
         type = "attachment_scope",
-        image = "flashlight.png",
+        image = "at_flashlight.png",
         attachment = {
             slot = "flashlight",
             componentHash = "", -- Unified system will resolve from weapon
@@ -199,7 +306,7 @@ Items = {
         weight = 0.3,
         size = { x = 1, y = 1 },
         type = "attachment_scope",
-        image = "scope_holo.png",
+        image = "at_scope_holo.png",
         attachment = {
             slot = "scope",
             componentHash = "COMPONENT_AT_SCOPE_MACRO_02",
@@ -210,7 +317,7 @@ Items = {
         weight = 0.2,
         size = { x = 1, y = 1 },
         type = "attachment_grip",
-        image = "grip.png",
+        image = "at_grip.png",
         attachment = {
             slot = "grip",
             componentHash = "COMPONENT_AT_AR_AFGRIP",
@@ -225,7 +332,7 @@ Items = {
         weight = 0.8,
         size = { x = 2, y = 2 },
         type = "helmet",
-        image = "helmet.png",
+        image = "binoculars.png",
         equipment = {
             propId = 0,       -- head prop slot 0 (SetPedPropIndex)
             drawableId = 150, -- base: no accessories
@@ -272,7 +379,7 @@ Items = {
         weight = 0.3,
         size = { x = 1, y = 1 },
         type = "helmet_accessory",
-        image = "nvg.png",
+        image = "nvscope_attachment.png",
         helmetAccessory = { slot = 'visor' }
     },
     ['thermal_monocle'] = {
@@ -280,7 +387,7 @@ Items = {
         weight = 0.2,
         size = { x = 1, y = 1 },
         type = "helmet_accessory",
-        image = "thermal.png",
+        image = "thermalscope_attachment.png",
         helmetAccessory = { slot = 'visor' }
     },
     ['rig_st_tipo_4'] = {
@@ -290,7 +397,7 @@ Items = {
         expandedSize = { x = 3, y = 3 },
         foldedSize   = { x = 2, y = 2 },
         type         = "vest",
-        image        = "vest_t4.png",
+        image        = "armor.png",
         equipment    = {
             componentId = 7,
             drawableId = 148,
@@ -309,7 +416,7 @@ Items = {
         expandedSize = { x = 4, y = 5 },
         foldedSize   = { x = 2, y = 2 },
         type         = "backpack",
-        image        = "backpack_luc.png",
+        image        = "parachute.png",
         equipment    = {
             componentId = 5,
             drawableId = 45,
@@ -345,7 +452,7 @@ Items = {
         weight = 0.2,
         size = { x = 1, y = 1 },
         type = "generic",
-        image = "suture_kit.png",
+        image = "advancedkit.png",
         consume = {
             type = "medical",
             animDict = "anim@heists@narcotics@funding@gang_idle",
@@ -358,7 +465,7 @@ Items = {
         weight = 0.15,
         size = { x = 1, y = 1 },
         type = "generic",
-        image = "antiseptic.png",
+        image = "acetone.png",
         stackable = true,
         maxStack = 5,
         consume = {
@@ -373,7 +480,7 @@ Items = {
         weight = 0.05,
         size = { x = 1, y = 1 },
         type = "generic",
-        image = "antibiotics.png",
+        image = "oxy.png",
         stackable = true,
         maxStack = 5,
         consume = {
@@ -403,7 +510,7 @@ Items = {
         weight = 0.5,
         size = { x = 1, y = 2 },
         type = "generic",
-        image = "dirty_water.png",
+        image = "water_bottle.png",
         consume = {
             type = "drink",
             animDict = "mp_player_intdrink",
@@ -417,7 +524,7 @@ Items = {
         weight = 0.4,
         size = { x = 1, y = 1 },
         type = "generic",
-        image = "canned_food.png",
+        image = "burger.png",
         consume = {
             type = "eat",
             animDict = "mp_player_inteat@burger",
@@ -430,7 +537,7 @@ Items = {
         weight = 0.5,
         size = { x = 1, y = 1 },
         type = "generic",
-        image = "raw_meat.png",
+        image = "sandwich.png",
         consume = {
             type = "eat",
             animDict = "mp_player_inteat@burger",
@@ -443,7 +550,7 @@ Items = {
         weight = 0.4,
         size = { x = 1, y = 1 },
         type = "generic",
-        image = "cooked_meat.png",
+        image = "tosti.png",
         consume = {
             type = "eat",
             animDict = "mp_player_inteat@burger",

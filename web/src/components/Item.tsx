@@ -5,6 +5,7 @@ import { Tooltip } from './Tooltip';
 import { ContextMenu } from './ContextMenu';
 import { QuantityModal } from './QuantityModal';
 import { fetchNui } from '../utils/nui';
+import { getImageUrl } from '../utils/images';
 import { useInventoryStore } from '../store/inventoryStore';
 import { ArrowDownToLine } from 'lucide-react';
 
@@ -234,9 +235,13 @@ export const ItemView: React.FC<ItemProps & {
     };
 
     const initiateQuantityAction = (type: 'drop' | 'split') => {
+        setActiveContextMenuItemId(null);
+        if (type === 'drop' && count <= 1) {
+            handleAction('drop', count);
+            return;
+        }
         setActionType(type);
         setModalOpen(true);
-        setActiveContextMenuItemId(null);
     };
 
     const onModalConfirm = (qty: number) => {
@@ -378,7 +383,7 @@ export const ItemView: React.FC<ItemProps & {
                 onDoubleClick={handleDoubleClick}
             >
                 {image ? (
-                    <img src={image} alt={name} className="w-full h-full object-contain p-1 pointer-events-none" />
+                    <img src={getImageUrl(image)} alt={name} className="w-full h-full object-contain p-1 pointer-events-none" />
                 ) : (
                     <span className="text-xs text-center text-text-subtle px-1 pointer-events-none">{label || name}</span>
                 )}
