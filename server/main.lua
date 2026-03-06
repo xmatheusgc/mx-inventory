@@ -1967,6 +1967,22 @@ RegisterNetEvent('mx-inv:server:updateAmmo', function(weaponHash, totalAmmo, cli
 
     if foundItem then
         if not foundItem.metadata then foundItem.metadata = {} end
+        
+        -- SECURITY: Prevent ammo injection from mod menus
+        local currentServerAmmo = tonumber(foundItem.metadata.ammo) or 0
+        local ammoDelta = totalAmmo - currentServerAmmo
+
+        -- The client should only ever report a *decrease* or *same* ammo from shooting.
+        if ammoDelta > 0 then
+            print('^1[mx-inv] SECURITY ALERT: Player ' .. src .. ' attempted to inject ' .. ammoDelta .. ' ammo into weapon ' .. weaponHash .. '^0')
+            -- Force client to sync back to the server's authoritative value
+            TriggerClientEvent('mx-inv:client:syncAmmoUI', src, foundSlot, currentServerAmmo, foundItem.metadata.clip or 0)
+            return
+        end
+        
+        -- Prevent negative ammo tracking
+        if totalAmmo < 0 then totalAmmo = 0 end
+
         foundItem.metadata.ammo = totalAmmo
         foundItem.metadata.clip = clipAmmo
 
@@ -2088,6 +2104,12 @@ RegisterNetEvent('mx-inv:server:dropItem', function(data)
     local itemId = data.itemId
     local amount = tonumber(data.amount) or 1
     local containerId = data.containerId
+
+    -- SECURITY: Prevent negative or zero amounts (Item Duplication Exploit)
+    if amount <= 0 then
+        print('^1[mx-inv] SECURITY ALERT: Player ' .. src .. ' attempted to drop invalid amount: ' .. amount .. '^0')
+        return
+    end
 
     if not Inventory[src] then return end
 
@@ -2612,8 +2634,10 @@ RegisterNetEvent('mx-inv:server:useHotbar', function(slotIndex)
     if item then
         local def = ItemDefs[item.name]
         if def and def.equipment and def.equipment.weaponHash then
-            print('^2[mx-inv] Hotbar: Setting active weapon for ' .. src .. ': ' .. def.equipment.weaponHash .. '^0')
-            TriggerClientEvent('mx-inv:client:setActiveWeapon', src, def.equipment.weaponHash)
+            local specificAmmo = tonumber(item.metadata and item.metadata.ammo) or 0
+            local attachments = item.metadata and item.metadata.attachments or nil
+            print('^2[mx-inv] Hotbar: Setting active weapon for ' .. src .. ': ' .. def.equipment.weaponHash .. ' with ' .. specificAmmo .. ' ammo.^0')
+            TriggerClientEvent('mx-inv:client:setActiveWeapon', src, def.equipment.weaponHash, specificAmmo, attachments, item.name)
         end
     else
         print('^3[mx-inv] Hotbar: No item in slot ' ..

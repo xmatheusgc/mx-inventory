@@ -124,24 +124,6 @@ Items = {
             }
         }
     },
-    ['w_ar_parafal'] = {
-        label = "Para FAL",
-        weight = 4.2,
-        size = { x = 4, y = 2 },
-        type = "weapon_rifle",
-        image = "WEAPON_MILITARYRIFLE.png",
-        dropProp = "w_ar_assaultrifle",
-        equipment = {
-            weaponHash = "WEAPON_MILITARYRIFLE",
-            caliber = "ammo_762x51",
-            defaultMagCapacity = 20,
-            supportedAttachments = {
-                muzzle = { label = "Muzzle", componentHash = "COMPONENT_AT_AR_SUPP_02" },
-                scope  = { label = "Scope", componentHash = "COMPONENT_AT_SCOPE_MACRO_02" },
-                flashlight = { label = "Flashlight", componentHash = "COMPONENT_AT_AR_FLSH" },
-            }
-        }
-    },
 
     -- 12 Gauge family
     ['shotgun'] = {
@@ -257,7 +239,7 @@ Items = {
     ['suppressor_545x39'] = {
         label = "Suppressor 545x39mm",
         weight = 0.4,
-        size = { x = 3, y = 1 },
+        size = { x = 2, y = 1 },
         type = "attachment_muzzle",
         image = "suppressor_attachment.png",
         attachment = {
@@ -269,7 +251,7 @@ Items = {
     ['suppressor_556x45'] = {
         label = "Suppressor 556x45mm",
         weight = 0.4,
-        size = { x = 3, y = 1 },
+        size = { x = 2, y = 1 },
         type = "attachment_muzzle",
         image = "suppressor_attachment.png",
         attachment = {
@@ -281,7 +263,7 @@ Items = {
     ['suppressor_762x51'] = {
         label = "Suppressor 762x51mm",
         weight = 0.5,
-        size = { x = 3, y = 1 },
+        size = { x = 2, y = 1 },
         type = "attachment_muzzle",
         image = "suppressor_attachment.png",
         attachment = {

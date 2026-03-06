@@ -183,10 +183,24 @@ end, false)
 
 
 
--- Weapon Wheel Disable & Shortcuts
+-- Weapon Wheel Disable & Shortcuts (and Anti-Cheat)
 Citizen.CreateThread(function()
+    SetWeaponsNoAutoswap(true)
+    _G.CurrentActiveWeaponHash = GetHashKey("WEAPON_UNARMED")
+
     while true do
         Wait(0)
+        local ped = PlayerPedId()
+
+        -- Anti-Cheat: Strip modded/wheel weapons
+        local selWeapon = GetSelectedPedWeapon(ped)
+        if selWeapon ~= GetHashKey("WEAPON_UNARMED") then
+            if _G.CurrentActiveWeaponHash and selWeapon ~= _G.CurrentActiveWeaponHash then
+                RemoveWeaponFromPed(ped, selWeapon)
+                SetCurrentPedWeapon(ped, GetHashKey("WEAPON_UNARMED"), true)
+            end
+        end
+
         -- Disable Weapon Wheel (TAB) and 1-5 Selection
         DisableControlAction(0, 37, true)  -- TAB (Weapon Wheel)
         DisableControlAction(0, 157, true) -- 1

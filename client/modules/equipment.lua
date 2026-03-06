@@ -45,29 +45,13 @@ RegisterNetEvent('mx-inv:client:updateEquipment', function(itemName, isEquipping
     -- Weapon Logic
     if eq.weaponHash then
         local hash = GetHashKey(eq.weaponHash)
-        if isEquipping then
-            GiveWeaponToPed(ped, hash, 0, false, false)
-            SetPedAmmo(ped, hash, ammoToLoad or 0)
-            if attachments then
-                for slot, attachName in pairs(attachments) do
-                    if attachName then
-                        local attachDef = Items[attachName]
-                        if attachDef and attachDef.attachment then
-                            -- INTELLIGENT LOOKUP:
-                            -- 1. Check if the weapon DEFINES a specific hash for this slot (e.g. Flashlight on Rifle vs Pistol)
-                            -- 2. Fallback to the attachment's own default hash
-                            local compHashStr = (eq.supportedAttachments and eq.supportedAttachments[slot] and eq.supportedAttachments[slot].componentHash) or attachDef.attachment.componentHash
-                            
-                            if compHashStr and compHashStr ~= "" then
-                                local compHash = GetHashKey(compHashStr)
-                                if compHash ~= 0 then GiveWeaponComponentToPed(ped, hash, compHash) end
-                            end
-                        end
-                    end
-                end
-            end
-        else
+        -- STRICT 1:1 WEAPON ARCHITECTURE: We no longer grant weapons in the background.
+        -- updateEquipment only handles visual props/clothing. Weapons are handled physically only in setActiveWeapon.
+        if not isEquipping then
             RemoveWeaponFromPed(ped, hash)
+            if _G.CurrentActiveWeaponHash == hash then
+                _G.CurrentActiveWeaponHash = GetHashKey("WEAPON_UNARMED")
+            end
         end
     end
 
@@ -114,18 +98,51 @@ RegisterNetEvent('mx-inv:client:updateEquipment', function(itemName, isEquipping
 end)
 
 -- Set Active Weapon (Hotbar)
-RegisterNetEvent('mx-inv:client:setActiveWeapon', function(weaponHash)
+RegisterNetEvent('mx-inv:client:setActiveWeapon', function(weaponHash, specificAmmo, attachments, itemName)
     local ped = PlayerPedId()
     if weaponHash then
         local hash = (type(weaponHash) == 'string') and GetHashKey(weaponHash) or weaponHash
         local currentWeapon = GetSelectedPedWeapon(ped)
         if currentWeapon == hash then
             SetCurrentPedWeapon(ped, GetHashKey("WEAPON_UNARMED"), true)
+            RemoveWeaponFromPed(ped, hash)
+            _G.CurrentActiveWeaponHash = GetHashKey("WEAPON_UNARMED")
         else
+            if _G.CurrentActiveWeaponHash and _G.CurrentActiveWeaponHash ~= GetHashKey("WEAPON_UNARMED") then
+                RemoveWeaponFromPed(ped, _G.CurrentActiveWeaponHash)
+            end
+            GiveWeaponToPed(ped, hash, 0, false, true)
             SetCurrentPedWeapon(ped, hash, true)
+            _G.CurrentActiveWeaponHash = hash
+            if specificAmmo ~= nil then
+                SetPedAmmo(ped, hash, specificAmmo)
+            end
+            
+            if attachments and itemName then
+                local def = Items[itemName]
+                if def and def.equipment then
+                    local eq = def.equipment
+                    for slot, attachName in pairs(attachments) do
+                        if attachName then
+                            local attachDef = Items[attachName]
+                            if attachDef and attachDef.attachment then
+                                local compHashStr = (eq.supportedAttachments and eq.supportedAttachments[slot] and eq.supportedAttachments[slot].componentHash) or attachDef.attachment.componentHash
+                                if compHashStr and compHashStr ~= "" then
+                                    local compHash = GetHashKey(compHashStr)
+                                    if compHash ~= 0 then GiveWeaponComponentToPed(ped, hash, compHash) end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
         end
     else
         SetCurrentPedWeapon(ped, GetHashKey("WEAPON_UNARMED"), true)
+        if _G.CurrentActiveWeaponHash and _G.CurrentActiveWeaponHash ~= GetHashKey("WEAPON_UNARMED") then
+            RemoveWeaponFromPed(ped, _G.CurrentActiveWeaponHash)
+        end
+        _G.CurrentActiveWeaponHash = GetHashKey("WEAPON_UNARMED")
     end
 end)
 
